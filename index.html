@@ -1,359 +1,309 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PLDT Quality Score and Cluster Management Dashboard</title>
-    <link rel="stylesheet" href="styles.css">
-    <script type="module" src="script.js"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PLDT Quality Score and Cluster Management Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<link rel="stylesheet" href="styles.css">
+<script type="module" src="script.js"></script>
 </head>
 <body>
 
-    <!-- ============ HEADER BANNER ============ -->
-    <header class="header-banner">
-        <div class="header-left">
-            <span class="header-logo">PLDT</span>
-            <span class="brand-subtext">Enterprise</span>
-        </div>
-        <div class="header-title">
-            <h1>PLDT Quality Score and Cluster Management</h1>
-            <p>GENUINE CARE AUDIT FORM</p>
-        </div>
-        <div class="header-right">
-            <span class="brand-tag">CONDUENT</span>
-            <span id="sessionChip" class="session-chip" style="display:none;">
-                <span id="sessionLabel"></span>
-                <button type="button" class="btn-logout" id="btnLogout">Log out</button>
-            </span>
-        </div>
-    </header>
+<!-- ============ HEADER ============ -->
+<div class="header-banner">
+    <div class="header-left">
+        <span class="header-logo">PLDT Quality Management</span>
+    </div>
+    <div class="header-title">
+        <h1>PLDT Quality Score and Cluster Management</h1>
+        <p>GENUINE CARE AUDIT FORM</p>
+    </div>
+    <div class="header-right">
+        <span class="brand-tag">CONDUENT</span>
+        <span id="sessionChip" class="session-chip" style="display:none;">
+            <span id="sessionLabel"></span>
+            <button class="btn-logout" onclick="logout()">Log out</button>
+        </span>
+    </div>
+</div>
 
-    <!-- ============ AUTHENTICATION SCREEN ============ -->
-    <main class="auth-wrap" id="authScreen">
-        <section class="auth-card">
-            <div class="auth-body">
-                <h2>System Authentication</h2>
-                <p class="sub">Log in with your enterprise credentials to access your designated workspace monitoring portal.</p>
-                
-                <form id="loginForm">
-                    <div class="form-group">
-                        <label for="loginEmail">Email Address</label>
-                        <input type="email" id="loginEmail" required placeholder="username@conduent.com">
-                    </div>
-                    <div class="form-group">
-                        <label for="loginPassword">Password</label>
-                        <input type="password" id="loginPassword" required placeholder="••••••••">
-                    </div>
-                    <div class="form-group">
-                        <label>Target Workspace Role</label>
-                        <div class="role-toggle" id="roleToggleGroup">
-                            <label class="checked">
-                                <input type="radio" name="authRole" value="agent" checked>
-                                <span>Agent</span>
-                            </label>
-                            <label>
-                                <input type="radio" name="authRole" value="team_leader">
-                                <span>Team Leader</span>
-                            </label>
-                            <label>
-                                <input type="radio" name="authRole" value="quality">
-                                <span>Quality / QA</span>
-                            </label>
-                        </div>
-                    </div>
-                    <button type="submit" class="btn-primary">Authenticate Account</button>
-                    <div id="authMessage" class="auth-msg error" aria-live="polite"></div>
-                </form>
-                <div class="auth-hint">
-                    <strong>Demo Directory Sign-in Access:</strong><br>
-                    • Agent: <code>agent@pldt.com</code><br>
-                    • Team Leader: <code>tl@pldt.com</code><br>
-                    • Quality Specialist: <code>qa@pldt.com</code><br>
-                    (Use password <code>pldt123</code> for all accounts)
+<!-- ============ AUTH SCREEN ============ -->
+<div class="auth-wrap" id="authScreen">
+    <div class="auth-card">
+        <div class="auth-tabs">
+            <div class="auth-tab active" id="tabLogin" onclick="switchAuthTab('login')">Log In</div>
+            <div class="auth-tab" id="tabSignup" onclick="switchAuthTab('signup')">Create Account</div>
+        </div>
+
+        <!-- LOGIN -->
+        <div class="auth-body" id="loginPane">
+            <h2>Welcome back</h2>
+            <p class="sub">Log in with your work email to view your Quality Score dashboard.</p>
+            <div class="form-group">
+                <label>Work Email</label>
+                <input type="email" id="loginEmail" placeholder="name@company.com" autocomplete="username">
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="loginPassword" placeholder="••••••••" autocomplete="current-password">
+            </div>
+            <button class="btn-primary" onclick="handleLogin()">Log In</button>
+            <div class="auth-msg" id="loginMsg"></div>
+
+            <div class="auth-hint">
+                <strong>Temporary quick access</strong> — use while setting up real accounts. Remove this section once your team is signing up normally.
+                <div style="display:flex; gap:8px; margin-top:8px;">
+                    <button type="button" class="btn-primary" style="background:#1a1a1a;" onclick="quickAccess('team_leader')">Team Leader</button>
+                    <button type="button" class="btn-primary" style="background:#1a1a1a;" onclick="quickAccess('quality')">Quality</button>
                 </div>
             </div>
-        </section>
-    </main>
-
-    <!-- ============ APPLICATION MAIN WORKSPACE ============ -->
-    <div id="appScreen" style="display: none;">
-        <div class="app-body">
-
-            <!-- SIDEBAR CONFIGURATION (MANAGEMENT VIEWS ONLY) -->
-            <nav class="sidebar" id="appSidebar" style="display:none;" aria-label="Filters Sidebar">
-                <div class="brand-logo-panel"><h2>PLDT</h2></div>
-
-                <!-- FILTERS (Visible to TL and QA) -->
-                <div class="filters-panel" id="sidebarFiltersPanel">
-                    <div class="filters-panel-head">
-                        <span>🔎 Data Filter Controls</span>
-                        <button type="button" class="filters-reset" id="btnResetFilters">Reset</button>
-                    </div>
-                    <div class="filter-field">
-                        <label for="selectFormType">Form Type</label>
-                        <div class="select-wrap">
-                            <select id="selectFormType"><option value="ALL">(All Form Types)</option></select>
-                        </div>
-                    </div>
-                    <div class="filter-field">
-                        <label for="selectBrand">Brand</label>
-                        <div class="select-wrap">
-                            <select id="selectBrand"><option value="ALL">(All Brands)</option></select>
-                        </div>
-                    </div>
-                    <div class="filter-field">
-                        <label for="selectMonth">Month</label>
-                        <div class="select-wrap">
-                            <select id="selectMonth"><option value="ALL">(All Months)</option></select>
-                        </div>
-                    </div>
-                    <div class="filter-field">
-                        <label for="selectWeekending">Weekending</label>
-                        <div class="select-wrap">
-                            <select id="selectWeekending"><option value="ALL">(All Weekending)</option></select>
-                        </div>
-                    </div>
-                    <div class="filter-field">
-                        <label for="selectTenure">Agent Tenure</label>
-                        <div class="select-wrap">
-                            <select id="selectTenure"><option value="ALL">(All Tenures)</option></select>
-                        </div>
-                    </div>
-                    <div class="filter-field">
-                        <label for="selectTeamLeader">Team Leader</label>
-                        <div class="select-wrap">
-                            <select id="selectTeamLeader"><option value="ALL">(All Team Leaders)</option></select>
-                        </div>
-                    </div>
-                </div>
-            </nav>
-
-            <!-- ===== WORKSPACE VIEW: TEAM LEADER / SUPERVISOR DASHBOARD ===== -->
-            <section class="dashboard-canvas" id="supervisorView" style="display:none;">
-                <div class="tables-grid">
-                    <div class="card-table">
-                        <h3>Pass Rate %</h3>
-                        <table class="excel-table">
-                            <thead><tr><th>Row Labels</th><th>PASSED</th><th>FAILED</th><th>Total</th></tr></thead>
-                            <tbody>
-                                <tr class="total-row">
-                                    <td>Grand Total</td>
-                                    <td id="totalPassRateVal">-</td>
-                                    <td id="totalFailRateVal">-</td>
-                                    <td>100%</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                    <div class="card-table">
-                        <h3>Audits (by Tenure)</h3>
-                        <table class="excel-table">
-                            <thead><tr><th>Row Labels</th><th>0-30</th><th>31-90</th><th>&gt;91 Days</th><th>Total</th></tr></thead>
-                            <tbody>
-                                <tr class="total-row">
-                                    <td>Grand Total</td>
-                                    <td id="totalAuditNhip">-</td>
-                                    <td id="totalAudit31">-</td>
-                                    <td id="totalAudit91">-</td>
-                                    <td id="totalAuditTotal">-</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                    <div class="card-table">
-                        <h3>Average QA Scores</h3>
-                        <table class="excel-table">
-                            <thead><tr><th>Row Labels</th><th>0-30</th><th>31-90</th><th>&gt;91 Days</th><th>Total</th></tr></thead>
-                            <tbody>
-                                <tr class="total-row">
-                                    <td>Grand Total</td>
-                                    <td id="totalAvgNhip">-</td>
-                                    <td id="totalAvg31">-</td>
-                                    <td id="totalAvg91">-</td>
-                                    <td id="totalAvgTotal">-</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                    <div class="card-table">
-                        <h3>CM Distribution</h3>
-                        <table class="excel-table">
-                            <thead><tr><th>Superstar</th><th>Underperformer</th></tr></thead>
-                            <tbody>
-                                <tr class="total-row">
-                                    <td id="cmSuperstarVal">-</td>
-                                    <td id="cmUnderperformerVal">-</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <div class="charts-row-1">
-                    <div class="chart-box">
-                        <div class="chart-title">Quality Score Per Parameter</div>
-                        <div class="bar-chart-container" id="parameterChart">
-                            <div class="bar-wrapper"><div class="bar-value" id="valReliable">-</div><div class="bar" id="barReliable" style="background:#f0c4c9;height:0%;"></div><div class="bar-label">Reliable</div></div>
-                            <div class="bar-wrapper"><div class="bar-value" id="valPersonable">-</div><div class="bar" id="barPersonable" style="background:#e6e6e6;height:0%;"></div><div class="bar-label">Personable</div></div>
-                            <div class="bar-wrapper"><div class="bar-value" id="valFast">-</div><div class="bar" id="barFast" style="background:#7a0f1e;height:0%;"></div><div class="bar-label">Fast</div></div>
-                            <div class="bar-wrapper"><div class="bar-value" id="valSecure">-</div><div class="bar" id="barSecure" style="background:#1a1a1a;height:0%;"></div><div class="bar-label">Safe &amp; Secure</div></div>
-                            <div class="bar-wrapper"><div class="bar-value" id="valOverall">-</div><div class="bar" id="barOverall" style="background:#C8102E;height:0%;"></div><div class="bar-label">Overall</div></div>
-                        </div>
-                    </div>
-                    <div class="chart-box">
-                        <div class="chart-title">Scores Per Team Leader</div>
-                        <div class="horizontal-chart" id="leaderChart">
-                            <div class="empty-note">No data for this selection.</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="charts-row-2">
-                    <div class="chart-box" style="min-height:200px;">
-                        <div class="chart-title">Top Hit Parameters (All Agents)</div>
-                        <table class="excel-table hitlist-table" id="topHitsTable">
-                            <thead><tr><th style="width:60%;">Parameter</th><th>Category</th><th>Times Hit</th></tr></thead>
-                            <tbody><tr><td colspan="3" class="empty-note">No data for this selection.</td></tr></tbody>
-                        </table>
-                    </div>
-                    <div class="chart-box" style="min-height:200px;">
-                        <div class="chart-title">Score By Cluster</div>
-                        <div class="horizontal-chart" id="clusterChart">
-                            <div class="empty-note">No data for this selection.</div>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- ===== WORKSPACE VIEW: AGENT PERFORMANCE VIEW ===== -->
-            <section id="agentView" style="display: none;">
-                <div class="agent-welcome">
-                    <h2 id="agentWelcomeName">Welcome Account Workspace</h2>
-                    <p id="agentWelcomeSub">Here is your Genuine Care Audit performance tracking summary ledger.</p>
-                </div>
-                <div id="agentEmptyState" class="empty-agent-data" style="display:none;">
-                    No validation evaluation scores matching your profile entity index identifier were found.
-                </div>
-                <div id="agentContent" style="display:none; flex-direction:column; gap:16px;">
-                    <div class="scorecard-grid" id="agentScorecard"></div>
-                    <div class="agent-section">
-                        <h3>Your Performance Evaluations &amp; Logged Flag Parameters</h3>
-                        <div id="agentAuditList"></div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- ===== WORKSPACE VIEW: QUALITY ENTRY CONSOLE ===== -->
-            <section id="qualityView" style="display: none; flex: 1; padding: 20px 24px; overflow-y: auto;">
-                <div class="agent-welcome" style="margin-bottom: 16px;">
-                    <h2>Quality Assurance Management Terminal</h2>
-                    <p>Log real-time evaluations, calibrate parameter constraints, and process transactional evaluations directly to the tracking matrix.</p>
-                </div>
-                <div class="quality-grid" style="display: grid; grid-template-columns: 1fr 1.5fr; gap: 20px;">
-                    <div class="chart-box" style="height: auto;">
-                        <div class="chart-title">New Evaluation Audit Registry</div>
-                        <form id="auditForm" style="display: flex; flex-direction: column; gap: 12px; padding: 5px;">
-                            <div class="field-row-2">
-                                <div class="form-group">
-                                    <label for="auditAgent">Agent Full Name</label>
-                                    <input type="text" id="auditAgent" required placeholder="Lastname, Firstname">
-                                </div>
-                                <div class="form-group">
-                                    <label for="auditEEID">EE ID Number</label>
-                                    <input type="text" id="auditEEID" required placeholder="52501234">
-                                </div>
-                            </div>
-                            <div class="field-row-2">
-                                <div class="form-group">
-                                    <label for="auditFormType">Form Type</label>
-                                    <select id="auditFormType">
-                                        <option value="Agent Level">Agent Level</option>
-                                        <option value="Program Level">Program Level</option>
-                                    </select>
-                                </div>
-                                <div class="form-group">
-                                    <label for="auditBrand">Brand</label>
-                                    <select id="auditBrand">
-                                        <option value="PLDT HOME">PLDT HOME</option>
-                                        <option value="PLDT ENTERPRISE">PLDT ENTERPRISE</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="field-row-2">
-                                <div class="form-group">
-                                    <label for="auditTL">Team Leader</label>
-                                    <input type="text" id="auditTL" required placeholder="Supervisor Name">
-                                </div>
-                                <div class="form-group">
-                                    <label for="auditCluster">Cluster Group</label>
-                                    <input type="text" id="auditCluster" required placeholder="A, B, C, or D">
-                                </div>
-                            </div>
-                            <div class="field-row-2">
-                                <div class="form-group">
-                                    <label for="auditWeek">Weekending (WE)</label>
-                                    <input type="text" id="auditWeek" required placeholder="WE0824">
-                                </div>
-                                <div class="form-group">
-                                    <label for="auditMonth">Month Name</label>
-                                    <select id="auditMonth">
-                                        <option value="JANUARY">January</option>
-                                        <option value="FEBRUARY">February</option>
-                                        <option value="MARCH">March</option>
-                                        <option value="APRIL">April</option>
-                                        <option value="MAY">May</option>
-                                        <option value="JUNE">June</option>
-                                        <option value="JULY">July</option>
-                                        <option value="AUGUST">August</option>
-                                        <option value="SEPTEMBER">September</option>
-                                        <option value="OCTOBER">October</option>
-                                        <option value="NOVEMBER">November</option>
-                                        <option value="DECEMBER">December</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label for="auditTenure">Agent Tenure Category</label>
-                                <select id="auditTenure">
-                                    <option value="0-30 DAYS">0-30 Days (NHIP)</option>
-                                    <option value="31-90 DAYS">31-90 Days</option>
-                                    <option value=">91 DAYS">&gt;91 Days (Tenured)</option>
-                                </select>
-                            </div>
-                            <div style="border-top: 1px solid #eee; padding-top: 10px;">
-                                <label style="font-size:10px; font-weight:bold; color:var(--pldt-red); text-transform:uppercase; display:block; margin-bottom:8px;">Evaluation Compliance Parameters</label>
-                                <div id="qaParametersInputs" style="max-height:220px; overflow-y:auto; padding-right:5px; display:flex; flex-direction:column; gap:8px;"></div>
-                            </div>
-                            <div class="form-group">
-                                <label for="auditComments">Additional Audit Evaluation Comments</label>
-                                <input type="text" id="auditComments" placeholder="Enter behavioral metrics feedback or gap descriptions...">
-                            </div>
-                            <button type="submit" class="btn-primary" style="background-color: #0f587d;">Commit Evaluation to Matrix</button>
-                        </form>
-                    </div>
-                    <div class="chart-box" style="height: auto;">
-                        <div class="chart-title">Live Pipeline Global Evaluation Feed</div>
-                        <div style="overflow-x:auto;">
-                            <table class="excel-table" id="qaLiveFeedTable">
-                                <thead>
-                                    <tr>
-                                        <th>Target Agent</th>
-                                        <th>Form Type</th>
-                                        <th>Weekending</th>
-                                        <th>Score</th>
-                                        <th>Pass Status</th>
-                                    </tr>
-                                </thead>
-                                <tbody></tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
         </div>
-        <footer class="disclaimer">Enterprise Operational Workspace Platform · Authorized Production Matrix Environment</footer>
+
+        <!-- SIGNUP -->
+        <div class="auth-body" id="signupPane" style="display:none;">
+            <h2>Create your account</h2>
+            <p class="sub">Agents are matched automatically to their audit scores using the roster your supervisor uploaded.</p>
+
+            <div class="role-toggle">
+                <label id="roleAgentLabel" class="checked" onclick="setSignupRole('agent')"><span>Agent</span></label>
+                <label id="roleTeamLeaderLabel" onclick="setSignupRole('team_leader')"><span>Team Leader</span></label>
+                <label id="roleQualityLabel" onclick="setSignupRole('quality')"><span>Quality</span></label>
+            </div>
+
+            <div class="form-group">
+                <label>Work Email</label>
+                <input type="email" id="signupEmail" placeholder="name@pldt-agent-email.com" autocomplete="username">
+            </div>
+
+            <div class="field-row-2">
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="signupPassword" placeholder="••••••••" autocomplete="new-password">
+                </div>
+                <div class="form-group">
+                    <label>Confirm Password</label>
+                    <input type="password" id="signupPassword2" placeholder="••••••••" autocomplete="new-password">
+                </div>
+            </div>
+
+            <div class="form-group" id="supervisorCodeGroup" style="display:none;">
+                <label id="supervisorCodeLabel">Invite Code</label>
+                <input type="text" id="supervisorCode" placeholder="Enter the invite code given by your admin">
+            </div>
+
+            <button class="btn-primary" onclick="handleSignup()">Create Account</button>
+            <div class="auth-msg" id="signupMsg"></div>
+
+            <div class="auth-hint">
+                Agent sign-up only succeeds if your email already appears on the roster a Quality account has uploaded. Team Leader and Quality accounts need an invite code from your admin (defaults: <code>PLDT-TL-2026</code> / <code>PLDT-QA-2026</code> — change these in <code>script.js</code> before real use).
+            </div>
+        </div>
     </div>
+</div>
+
+<!-- ============ APP SCREEN ============ -->
+<div id="appScreen">
+    <div class="app-body">
+
+        <!-- ===== SUPERVISOR VIEW ===== -->
+        <div class="sidebar" id="supervisorSidebar" style="display:none;">
+            <div class="filters-panel">
+                <div class="filters-panel-head">
+                    <span>🔎 Filters</span>
+                    <button type="button" class="filters-reset" onclick="resetFilters()">Reset</button>
+                </div>
+
+                <div class="filter-field">
+                    <label>Form Type</label>
+                    <div class="select-wrap">
+                        <select id="selectFormType" onchange="filterData()"><option value="ALL">(All Form Types)</option></select>
+                    </div>
+                </div>
+                <div class="filter-field">
+                    <label>LOB</label>
+                    <div class="select-wrap">
+                        <select id="selectBrand" onchange="filterData()"><option value="ALL">(All LOB)</option></select>
+                    </div>
+                </div>
+                <div class="filter-field">
+                    <label>Month</label>
+                    <div class="select-wrap">
+                        <select id="selectMonth" onchange="filterData()"><option value="ALL">(All Months)</option></select>
+                    </div>
+                </div>
+                <div class="filter-field">
+                    <label>Weekending</label>
+                    <div class="select-wrap">
+                        <select id="selectWeekending" onchange="filterData()"><option value="ALL">(All Weekending)</option></select>
+                    </div>
+                </div>
+                <div class="filter-field">
+                    <label>Agent Tenure</label>
+                    <div class="select-wrap">
+                        <select id="selectTenure" onchange="filterData()"><option value="ALL">(All Tenures)</option></select>
+                    </div>
+                </div>
+                <div class="filter-field">
+                    <label>Team Leader</label>
+                    <div class="select-wrap">
+                        <select id="selectTeamLeader" onchange="filterData()"><option value="ALL">(All Team Leaders)</option></select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar-top-row">
+                <button class="upload-icon-btn" id="uploadIconBtn" onclick="toggleUploadPanel()" title="Upload / manage data">📁<span class="upload-icon-label">Data</span></button>
+            </div>
+
+            <div class="upload-popover" id="uploadPopover" style="display:none;">
+                <div class="upload-section">
+                    <h4>1. Agent Roster</h4>
+                    <div class="upload-btn-wrapper">
+                        <button class="btn-upload">📇 Upload Roster (Email/Name/ID)</button>
+                        <input type="file" id="rosterFileInput" accept=".csv,.xlsx,.xls" onchange="handleRosterUpload(event)">
+                    </div>
+                    <div class="file-status" id="rosterStatus">No roster loaded yet.</div>
+                </div>
+
+                <div class="upload-section">
+                    <h4>2. Raw Audit Data</h4>
+                    <div class="upload-btn-wrapper">
+                        <button class="btn-upload">📁 Upload Raw Data</button>
+                        <input type="file" id="dataFileInput" accept=".csv,.xlsx,.xls" onchange="handleDataUpload(event)">
+                    </div>
+                    <div class="file-status" id="dataStatus">No audit data loaded yet.</div>
+                    <button class="btn-upload" style="background:#1a1a1a;border-color:#1a1a1a;" onclick="resyncAgentEmails()">🔄 Re-sync Agent Matching</button>
+                    <div class="file-status" id="resyncStatus">Use this if agents uploaded/updated after data was already loaded, or if an agent can't see rows that should be theirs.</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="dashboard-canvas" id="supervisorView" style="display:none;">
+            <div class="tables-grid">
+                <div class="card-table">
+                    <h3>Pass Rate %</h3>
+                    <table class="excel-table">
+                        <thead><tr><th>Row Labels</th><th>PASSED</th><th>FAILED</th><th>Total</th></tr></thead>
+                        <tbody>
+                            <tr class="total-row">
+                                <td>Grand Total</td>
+                                <td id="totalPassRateVal">-</td>
+                                <td id="totalFailRateVal">-</td>
+                                <td>100%</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="card-table">
+                    <h3>Number of Audits (by Tenure)</h3>
+                    <table class="excel-table">
+                        <thead><tr><th>Row Labels</th><th>0-30</th><th>31-90</th><th>&gt;91 Days</th><th>Total</th></tr></thead>
+                        <tbody>
+                            <tr class="total-row">
+                                <td>Grand Total</td>
+                                <td id="totalAuditNhip">-</td>
+                                <td id="totalAudit31">-</td>
+                                <td id="totalAudit91">-</td>
+                                <td id="totalAuditTotal">-</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="card-table">
+                    <h3>Average QA Scores (by Tenure)</h3>
+                    <table class="excel-table">
+                        <thead><tr><th>Row Labels</th><th>0-30</th><th>31-90</th><th>&gt;91 Days</th><th>Total</th></tr></thead>
+                        <tbody>
+                            <tr class="total-row">
+                                <td>Grand Total</td>
+                                <td id="totalAvgNhip">-</td>
+                                <td id="totalAvg31">-</td>
+                                <td id="totalAvg91">-</td>
+                                <td id="totalAvgTotal">-</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="card-table">
+                    <h3>CM Distribution</h3>
+                    <table class="excel-table">
+                        <thead><tr><th>Superstar</th><th>Underperformer</th></tr></thead>
+                        <tbody>
+                            <tr class="total-row">
+                                <td id="cmSuperstarVal">-</td>
+                                <td id="cmUnderperformerVal">-</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="charts-row-1">
+                <div class="chart-box">
+                    <div class="chart-title">Score per LOB</div>
+                    <div class="bar-chart-container" id="parameterChart"></div>
+                </div>
+                <div class="chart-box">
+                    <div class="chart-title">Scores Per Team Leader</div>
+                    <div class="horizontal-chart" id="leaderChart">
+                        <div class="empty-note">Upload data to populate.</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="chart-box" style="min-height:200px;">
+                <div class="chart-title">Top Hit Parameters (All Agents)</div>
+                <table class="excel-table hitlist-table" id="topHitsTable">
+                    <thead><tr><th style="width:60%;">Parameter</th><th>Category</th><th>Times Hit</th></tr></thead>
+                    <tbody><tr><td colspan="3" class="empty-note">Upload data to populate.</td></tr></tbody>
+                </table>
+            </div>
+
+            <div class="chart-box">
+                <div class="chart-title">Cluster Score Distribution</div>
+                <table class="excel-table" id="clusterDistTable">
+                    <thead>
+                        <tr>
+                            <th>Cluster</th>
+                            <th>90–100%</th>
+                            <th>80–89%</th>
+                            <th>70–79%</th>
+                            <th>60–69%</th>
+                            <th>Below 60%</th>
+                            <th>Total Audits</th>
+                        </tr>
+                    </thead>
+                    <tbody><tr><td colspan="7" class="empty-note">Upload data to populate.</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- ===== AGENT VIEW ===== -->
+        <div id="agentView">
+            <div class="agent-welcome">
+                <h2 id="agentWelcomeName">Welcome</h2>
+                <p id="agentWelcomeSub">Here is your Genuine Care Audit performance summary.</p>
+            </div>
+
+            <div id="agentEmptyState" class="empty-agent-data" style="display:none;">
+                No audits have been recorded against your name yet. Once your supervisor uploads new audit data, your scores will appear here automatically.
+            </div>
+
+            <div id="agentContent" style="display:none; flex-direction:column; gap:16px;">
+                <div class="scorecard-grid" id="agentScorecard"></div>
+
+                <div class="agent-section">
+                    <h3>Your Audits &amp; What Was Flagged</h3>
+                    <div id="agentAuditList"></div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <footer class="disclaimer">Prototype build · data stored in shared app storage, not a production database · do not enter real customer PII</footer>
+</div>
 
 </body>
 </html>
