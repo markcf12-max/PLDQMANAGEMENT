@@ -485,13 +485,13 @@ async function handleRosterUpload(event) {
         const rows = await parseWorkbookFile(file);
         if (!rows.length) throw new Error('empty');
 
-        const emailKey = findHeader(rows[0], ['Email', 'Work Email', 'Conduent Email Address', 'Email Address']);
+        const emailKey = findHeader(rows[0], ['PLDT/SMART Domain v2', 'PLDT/SMART Domain', 'Email', 'Work Email', 'Conduent Email Address', 'Email Address']);
         const nameKey = findHeader(rows[0], ['Agent Name', 'AGENT/OFFICER NAME', 'Name', 'Employee Name', 'Full Name']);
         const idKey = findHeader(rows[0], ['ID', 'Employee ID', 'EE number/ID number', 'Agent ID', 'Win ID', 'WIN ID', 'Badge Number']);
 
         if (!emailKey || !nameKey) {
             console.warn('Roster column detection failed. Email column found:', emailKey, '| Name column found:', nameKey);
-            console.log('Actual column headers in this file:', Object.keys(rows[0]));
+            console.log('Actual column headers in this file:', JSON.stringify(Object.keys(rows[0])));
             throw new Error('missing columns');
         }
 
@@ -598,7 +598,7 @@ async function handleDataUpload(event) {
         const missingFields = NEEDED_FIELDS.filter(f => !headerMap[f]);
         if (missingFields.length) {
             console.warn('Columns not found in uploaded file:', missingFields);
-            console.log('Actual column headers in this file:', Object.keys(rows[0]));
+            console.log('Actual column headers in this file:', JSON.stringify(Object.keys(rows[0])));
         }
 
         // build a name -> email lookup from the roster so each audit row can be
