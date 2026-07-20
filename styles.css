@@ -1,16 +1,16 @@
 :root {
         --pldt-red: #C8102E;
         --pldt-red-dark: #9A0C22;
-        --pldt-blue: #002F6C;
-        --pldt-blue-light: #0057B8;
+        --pldt-black: #1a1a1a;
+        --pldt-gray: #6b6b6b;
         --pldt-red-mid: #B01427;
         
-        --slicer-bg: #e3edf9;
-        --slicer-border: #a9c6e8;
-        --bg-beige: #f3e6dc;
+        --slicer-bg: #fbeaec;
+        --slicer-border: #e8b4bb;
+        --bg-beige: #f7f7f7;
         --card-border: #f3c3c9;
         --dark-gray: #333333;
-        --gold: #0057B8;
+        --gold: #1a1a1a;
         --danger: #b3261e;
         --danger-bg: #fbeceb;
     }
@@ -156,7 +156,7 @@
         font-weight: bold;
         border: 1px solid var(--slicer-border);
         background: var(--slicer-bg);
-        color: #003a7a;
+        color: #7a0f1e;
         border-radius: 4px;
         cursor: pointer;
         user-select: none;
@@ -297,7 +297,7 @@
         font-size: 11.5px;
         font-family: inherit;
         font-weight: 600;
-        color: #003a7a;
+        color: #7a0f1e;
         background-color: var(--slicer-bg);
         border: 1.5px solid transparent;
         border-radius: 7px;
@@ -371,9 +371,9 @@
         font-weight: bold;
         color: #333;
         text-align: center;
-        background-color: #fce4d6;
+        background-color: #fbeaec;
         padding: 3px;
-        border: 1px solid #f8cbad;
+        border: 1px solid #f3c3c9;
     }
 
     .excel-table { width: 100%; border-collapse: collapse; font-size: 10px; text-align: center; }
@@ -438,9 +438,9 @@
         white-space: nowrap;
     }
     .tag.Reliable { background: #f0c4c9; color: #7a0f1e; }
-    .tag.Personable { background: #c9d9ef; color: #002f6c; }
-    .tag.Fast { background: #002f6c; }
-    .tag.Safe.Secure, .tag.SafeSecure { background: #0057b8; }
+    .tag.Personable { background: #e6e6e6; color: #2b2b2b; }
+    .tag.Fast { background: #7a0f1e; }
+    .tag.Safe.Secure, .tag.SafeSecure { background: #1a1a1a; }
     .tag.Mistreat { background: var(--danger); }
 
     .empty-note { font-size: 11px; color: #999; text-align: center; padding: 20px; }
