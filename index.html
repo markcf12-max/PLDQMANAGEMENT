@@ -10,7 +10,7 @@
 <body>
 
     <!-- ============ HEADER BANNER ============ -->
-    <div class="header-banner">
+    <header class="header-banner">
         <div class="header-left">
             <span class="header-logo">PLDT</span>
             <span class="brand-subtext">Enterprise</span>
@@ -26,11 +26,11 @@
                 <button type="button" class="btn-logout" id="btnLogout">Log out</button>
             </span>
         </div>
-    </div>
+    </header>
 
     <!-- ============ AUTHENTICATION SCREEN ============ -->
-    <div class="auth-wrap" id="authScreen">
-        <div class="auth-card">
+    <main class="auth-wrap" id="authScreen">
+        <section class="auth-card">
             <div class="auth-body">
                 <h2>System Authentication</h2>
                 <p class="sub">Log in with your enterprise credentials to access your designated workspace monitoring portal.</p>
@@ -47,13 +47,22 @@
                     <div class="form-group">
                         <label>Target Workspace Role</label>
                         <div class="role-toggle" id="roleToggleGroup">
-                            <label class="checked"><input type="radio" name="authRole" value="agent" checked><span>Agent</span></label>
-                            <label><input type="radio" name="authRole" value="team_leader"><span>Team Leader</span></label>
-                            <label><input type="radio" name="authRole" value="quality"><span>Quality / QA</span></label>
+                            <label class="checked">
+                                <input type="radio" name="authRole" value="agent" checked>
+                                <span>Agent</span>
+                            </label>
+                            <label>
+                                <input type="radio" name="authRole" value="team_leader">
+                                <span>Team Leader</span>
+                            </label>
+                            <label>
+                                <input type="radio" name="authRole" value="quality">
+                                <span>Quality / QA</span>
+                            </label>
                         </div>
                     </div>
                     <button type="submit" class="btn-primary">Authenticate Account</button>
-                    <div id="authMessage" class="auth-msg error"></div>
+                    <div id="authMessage" class="auth-msg error" aria-live="polite"></div>
                 </form>
                 <div class="auth-hint">
                     <strong>Demo Directory Sign-in Access:</strong><br>
@@ -63,15 +72,15 @@
                     (Use password <code>pldt123</code> for all accounts)
                 </div>
             </div>
-        </div>
-    </div>
+        </section>
+    </main>
 
     <!-- ============ APPLICATION MAIN WORKSPACE ============ -->
     <div id="appScreen" style="display: none;">
         <div class="app-body">
 
             <!-- SIDEBAR CONFIGURATION (MANAGEMENT VIEWS ONLY) -->
-            <div class="sidebar" id="appSidebar" style="display:none;">
+            <nav class="sidebar" id="appSidebar" style="display:none;" aria-label="Filters Sidebar">
                 <div class="brand-logo-panel"><h2>PLDT</h2></div>
 
                 <!-- FILTERS (Visible to TL and QA) -->
@@ -117,10 +126,10 @@
                         </div>
                     </div>
                 </div>
-            </div>
+            </nav>
 
             <!-- ===== WORKSPACE VIEW: TEAM LEADER / SUPERVISOR DASHBOARD ===== -->
-            <div class="dashboard-canvas" id="supervisorView" style="display:none;">
+            <section class="dashboard-canvas" id="supervisorView" style="display:none;">
                 <div class="tables-grid">
                     <div class="card-table">
                         <h3>Pass Rate %</h3>
@@ -214,13 +223,13 @@
                         </div>
                     </div>
                 </div>
-            </div>
+            </section>
 
             <!-- ===== WORKSPACE VIEW: AGENT PERFORMANCE VIEW ===== -->
-            <div id="agentView" style="display: none;">
+            <section id="agentView" style="display: none;">
                 <div class="agent-welcome">
                     <h2 id="agentWelcomeName">Welcome Account Workspace</h2>
-                    <p id="agentWelcomeSub">Here is your Genuine Care Audit performance tracking summary summary ledger.</p>
+                    <p id="agentWelcomeSub">Here is your Genuine Care Audit performance tracking summary ledger.</p>
                 </div>
                 <div id="agentEmptyState" class="empty-agent-data" style="display:none;">
                     No validation evaluation scores matching your profile entity index identifier were found.
@@ -232,10 +241,10 @@
                         <div id="agentAuditList"></div>
                     </div>
                 </div>
-            </div>
+            </section>
 
             <!-- ===== WORKSPACE VIEW: QUALITY ENTRY CONSOLE ===== -->
-            <div id="qualityView" style="display: none; flex: 1; padding: 20px 24px; overflow-y: auto;">
+            <section id="qualityView" style="display: none; flex: 1; padding: 20px 24px; overflow-y: auto;">
                 <div class="agent-welcome" style="margin-bottom: 16px;">
                     <h2>Quality Assurance Management Terminal</h2>
                     <p>Log real-time evaluations, calibrate parameter constraints, and process transactional evaluations directly to the tracking matrix.</p>
@@ -340,7 +349,7 @@
                         </div>
                     </div>
                 </div>
-            </div>
+            </section>
 
         </div>
         <footer class="disclaimer">Enterprise Operational Workspace Platform · Authorized Production Matrix Environment</footer>
