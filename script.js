@@ -1,10 +1,284 @@
 /* ==========================================================================
-   PLDT QUALITY SCORE DASHBOARD — RUNTIME BUILD
+   FIREBASE
    ========================================================================== */
+import { auth, db } from './firebase-config.js';
+import {
+    createUserWithEmailAndPassword,
+    signInWithEmailAndPassword,
+    signOut,
+    deleteUser,
+    onAuthStateChanged
+} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import {
+    doc, getDoc, setDoc, deleteDoc,
+    collection, query, where, getDocs, writeBatch
+} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
+const TEAM_LEADER_INVITE_CODE = 'SMART-TL-2026'; 
+const QUALITY_INVITE_CODE = 'SMART-QA-2026'; 
+
+/* Firestore write batches max out at 500 ops — chunk anything bigger */
+async function batchWriteDocs(collectionName, docs, idFn) {
+    const chunks = [];
+    for (let i = 0; i < docs.length; i += 400) chunks.push(docs.slice(i, i + 400));
+    for (const chunk of chunks) {
+        const batch = writeBatch(db);
+        chunk.forEach(d => {
+            const ref = idFn ? doc(db, collectionName, idFn(d)) : doc(collection(db, collectionName));
+            batch.set(ref, d);
+        });
+        await batch.commit();
+    }
+}
+
+async function clearCollection(collectionName) {
+    const snap = await getDocs(collection(db, collectionName));
+    const ids = snap.docs.map(d => d.id);
+    for (let i = 0; i < ids.length; i += 400) {
+        const chunk = ids.slice(i, i + 400);
+        const batch = writeBatch(db);
+        chunk.forEach(id => batch.delete(doc(db, collectionName, id)));
+        await batch.commit();
+    }
+}
+
+async function replaceAuditData(rows) {
+    const metaRef = doc(db, 'meta', 'auditData');
+    const metaSnap = await getDoc(metaRef);
+    const prevCount = metaSnap.exists() ? (metaSnap.data().count || 0) : 0;
+
+    for (let i = 0; i < prevCount; i += 400) {
+        const end = Math.min(i + 400, prevCount);
+        const batch = writeBatch(db);
+        for (let j = i; j < end; j++) batch.delete(doc(db, 'auditData', 'row_' + j));
+        await batch.commit();
+    }
+
+    for (let i = 0; i < rows.length; i += 400) {
+        const chunk = rows.slice(i, i + 400);
+        const batch = writeBatch(db);
+        chunk.forEach((row, idx) => batch.set(doc(db, 'auditData', 'row_' + (i + idx)), row));
+        await batch.commit();
+    }
+
+    await setDoc(metaRef, { count: rows.length, updatedAt: Date.now() });
+}
+
+/* ==========================================================================
+   SESSION
+   ========================================================================== */
 let currentSession = null; 
-let cachedAuditRows = [];
 
+/* ==========================================================================
+   AUTH UI
+   ========================================================================== */
+function switchAuthTab(which) {
+    document.getElementById('tabLogin').classList.toggle('active', which === 'login');
+    document.getElementById('tabSignup').classList.toggle('active', which === 'signup');
+    document.getElementById('loginPane').style.display = which === 'login' ? 'block' : 'none';
+    document.getElementById('signupPane').style.display = which === 'signup' ? 'block' : 'none';
+}
+
+let signupRole = 'agent';
+function setSignupRole(role) {
+    signupRole = role;
+    document.getElementById('roleAgentLabel').classList.toggle('checked', role === 'agent');
+    document.getElementById('roleTeamLeaderLabel').classList.toggle('checked', role === 'team_leader');
+    document.getElementById('roleQualityLabel').classList.toggle('checked', role === 'quality');
+    const needsCode = role === 'team_leader' || role === 'quality';
+    document.getElementById('supervisorCodeGroup').style.display = needsCode ? 'block' : 'none';
+    if (needsCode) {
+        document.getElementById('supervisorCodeLabel').textContent = role === 'team_leader' ? 'Team Leader Invite Code' : 'Quality Invite Code';
+    }
+}
+
+function showAuthMsg(elId, text, ok) {
+    const el = document.getElementById(elId);
+    el.textContent = text;
+    el.className = 'auth-msg ' + (ok ? 'ok' : 'error');
+}
+
+let authFlowInProgress = false;
+const REQUIRED_EMAIL_DOMAIN = '@supplier.smart.com.ph';
+
+async function handleSignup() {
+    const email = document.getElementById('signupEmail').value.trim().toLowerCase();
+    const pw = document.getElementById('signupPassword').value;
+    const pw2 = document.getElementById('signupPassword2').value;
+
+    if (!email || !email.includes('@')) return showAuthMsg('signupMsg', 'Enter a valid work email.', false);
+    if (!email.endsWith(REQUIRED_EMAIL_DOMAIN)) return showAuthMsg('signupMsg', `Please sign up using your ${REQUIRED_EMAIL_DOMAIN} work email.`, false);
+    if (pw.length < 6) return showAuthMsg('signupMsg', 'Password must be at least 6 characters.', false);
+    if (pw !== pw2) return showAuthMsg('signupMsg', 'Passwords do not match.', false);
+
+    authFlowInProgress = true;
+    try {
+        if (signupRole === 'team_leader' || signupRole === 'quality') {
+            const requiredCode = signupRole === 'team_leader' ? TEAM_LEADER_INVITE_CODE : QUALITY_INVITE_CODE;
+            const code = document.getElementById('supervisorCode').value.trim();
+            if (code !== requiredCode) return showAuthMsg('signupMsg', 'Invalid invite code.', false);
+
+            let cred;
+            try {
+                cred = await createUserWithEmailAndPassword(auth, email, pw);
+            } catch (err) {
+                return showAuthMsg('signupMsg', friendlyAuthError(err), false);
+            }
+            await setDoc(doc(db, 'users', cred.user.uid), { email, role: signupRole });
+            await signOut(auth);
+            showAuthMsg('signupMsg', `${signupRole === 'team_leader' ? 'Team Leader' : 'Quality'} account created. You can log in now.`, true);
+            clearSignupForm();
+            setTimeout(() => switchAuthTab('login'), 1200);
+            return;
+        }
+
+        let cred;
+        try {
+            cred = await createUserWithEmailAndPassword(auth, email, pw);
+        } catch (err) {
+            return showAuthMsg('signupMsg', friendlyAuthError(err), false);
+        }
+
+        try {
+            const rosterSnap = await getDoc(doc(db, 'roster', email));
+            if (!rosterSnap.exists()) {
+                await deleteUser(cred.user);
+                return showAuthMsg('signupMsg', 'This email was not found on the agent roster. Ask your supervisor to add you, then try again.', false);
+            }
+            const match = rosterSnap.data();
+
+            await setDoc(doc(db, 'users', cred.user.uid), {
+                email,
+                role: 'agent',
+                agentName: match.agentName,
+                agentId: match.agentId || ''
+            });
+            await signOut(auth);
+            showAuthMsg('signupMsg', `Account created and matched to "${match.agentName}". You can log in now.`, true);
+            clearSignupForm();
+            setTimeout(() => switchAuthTab('login'), 1200);
+        } catch (err) {
+            try { await deleteUser(cred.user); } catch (e2) {}
+            showAuthMsg('signupMsg', friendlyAuthError(err), false);
+        }
+    } finally {
+        authFlowInProgress = false;
+    }
+}
+
+function clearSignupForm() {
+    document.getElementById('signupEmail').value = '';
+    document.getElementById('signupPassword').value = '';
+    document.getElementById('signupPassword2').value = '';
+    const codeEl = document.getElementById('supervisorCode');
+    if (codeEl) codeEl.value = '';
+}
+
+async function handleLogin() {
+    const email = document.getElementById('loginEmail').value.trim().toLowerCase();
+    const pw = document.getElementById('loginPassword').value;
+    if (!email || !pw) return showAuthMsg('loginMsg', 'Enter your email and password.', false);
+
+    authFlowInProgress = true;
+    try {
+        const cred = await signInWithEmailAndPassword(auth, email, pw);
+        const profileSnap = await getDoc(doc(db, 'users', cred.user.uid));
+        if (!profileSnap.exists()) {
+            await signOut(auth);
+            return showAuthMsg('loginMsg', 'No profile found for this account. Contact your supervisor.', false);
+        }
+        currentSession = { uid: cred.user.uid, ...profileSnap.data() };
+        document.getElementById('loginEmail').value = '';
+        document.getElementById('loginPassword').value = '';
+        await enterApp();
+    } catch (err) {
+        showAuthMsg('loginMsg', friendlyAuthError(err), false);
+    } finally {
+        authFlowInProgress = false;
+    }
+}
+
+function logout() {
+    signOut(auth);
+}
+
+function friendlyAuthError(err) {
+    const code = err && err.code ? err.code : '';
+    if (code.includes('email-already-in-use')) return 'An account with this email already exists. Try logging in.';
+    if (code.includes('invalid-credential') || code.includes('wrong-password') || code.includes('user-not-found')) return 'Incorrect email or password.';
+    if (code.includes('weak-password')) return 'Password must be at least 6 characters.';
+    if (code.includes('invalid-email')) return 'Enter a valid email address.';
+    return 'Something went wrong: ' + (err && err.message ? err.message : 'please try again.');
+}
+
+function resetToLoggedOutState() {
+    currentSession = null;
+    cachedAuditRows = [];
+    document.getElementById('appScreen').style.display = 'none';
+    document.getElementById('authScreen').style.display = 'flex';
+    document.getElementById('sessionChip').style.display = 'none';
+    document.getElementById('loginEmail').value = '';
+    document.getElementById('loginPassword').value = '';
+    document.getElementById('loginMsg').className = 'auth-msg';
+    clearSignupForm();
+    switchAuthTab('login');
+
+    document.getElementById('agentAuditList').innerHTML = '';
+    document.getElementById('agentScorecard').innerHTML = '';
+    document.getElementById('agentWelcomeName').textContent = 'Welcome';
+    document.getElementById('rosterStatus').textContent = 'No roster loaded yet.';
+    document.getElementById('dataStatus').textContent = 'No audit data loaded yet.';
+    document.getElementById('resyncStatus').textContent = 'Use this if agents uploaded/updated after data was already loaded...';
+    document.getElementById('uploadPopover').style.display = 'none';
+}
+
+onAuthStateChanged(auth, async (user) => {
+    if (authFlowInProgress) return;
+    if (!user) {
+        resetToLoggedOutState();
+        return;
+    }
+    const profileSnap = await getDoc(doc(db, 'users', user.uid));
+    if (!profileSnap.exists()) {
+        await signOut(auth);
+        return;
+    }
+    currentSession = { uid: user.uid, ...profileSnap.data() };
+    await enterApp();
+});
+
+async function enterApp() {
+    document.getElementById('authScreen').style.display = 'none';
+    document.getElementById('appScreen').style.display = 'flex';
+    document.getElementById('sessionChip').style.display = 'flex';
+
+    const roleLabels = { quality: '👤 Quality · ', team_leader: '👤 Team Leader · ', supervisor: '👤 Quality · ', agent: '👤 Agent · ' };
+    document.getElementById('sessionLabel').textContent = (roleLabels[currentSession.role] || '👤 ') + currentSession.email;
+
+    const canViewDashboard = currentSession.role === 'quality' || currentSession.role === 'team_leader' || currentSession.role === 'supervisor';
+    const canUpload = currentSession.role === 'quality' || currentSession.role === 'supervisor';
+
+    document.getElementById('supervisorSidebar').style.display = canViewDashboard ? 'flex' : 'none';
+    document.getElementById('supervisorView').style.display = canViewDashboard ? 'flex' : 'none';
+    document.getElementById('agentView').style.display = canViewDashboard ? 'none' : 'flex';
+    document.getElementById('uploadIconBtn').style.display = canUpload ? 'flex' : 'none';
+
+    if (canViewDashboard) {
+        if (canUpload) await refreshRosterStatus();
+        const rows = await loadAllAuditData();
+        if (rows.length) {
+            if (canUpload) document.getElementById('dataStatus').innerHTML = `✅ ${rows.length} audit rows loaded.`;
+            populateDropdownOptions(rows);
+            filterData();
+        }
+    } else {
+        await renderAgentView();
+    }
+}
+
+/* ==========================================================================
+   HIT-PARAMETER CONFIG
+   ========================================================================== */
 const NON_ISSUE_VALUES = new Set(['', 'NO OPPORTUNITY', 'NA', 'N/A', 'NO', 'NONE']);
 
 const HIT_PARAMS = [
@@ -38,6 +312,16 @@ function normVal(v) {
     return (v === undefined || v === null) ? '' : String(v).trim().toUpperCase();
 }
 
+function normalizeName(str) {
+    return String(str || '')
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .toUpperCase()
+        .replace(/[.,'-]/g, ' ')
+        .replace(/\b(JR|SR|II|III|IV)\b/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
 function getRowIssues(row) {
     const issues = [];
     HIT_PARAMS.forEach(p => {
@@ -58,136 +342,210 @@ function getRowIssues(row) {
 }
 
 /* ==========================================================================
-   STANDALONE DATA GENERATION ENGINE
+   FILE PARSING
    ========================================================================== */
-const PLDT_AGENTS = [
-    { name: 'Dela Cruz, Juan', tenure: '>91 DAYS' },
-    { name: 'Santos, Maria', tenure: '>91 DAYS' },
-    { name: 'Reyes, Aldrin', tenure: '31-90 DAYS' },
-    { name: 'Bautista, Elisa', tenure: '0-30 DAYS' },
-    { name: 'Aquino, Paolo', tenure: '>91 DAYS' },
-    { name: 'Alvarez, Glenn', tenure: '31-90 DAYS' }
-];
-const PLDT_TLS = ['TL Cruz, Jennifer', TL_Pascual_Marvin = 'TL Pascual, Marvin', 'TL Soriano, Rachel'];
-const PLDT_CLUSTERS = ['Cluster Alpha', 'Cluster Beta', 'Cluster Gamma'];
-const PLDT_BRANDS = ['PLDT Home DSL/Fibr', 'PLDT Enterprise Voice', 'PLDT Mobile Data'];
-const PLDT_FORM_TYPES = ['Voice Call Form', 'Digital Chat Form'];
-const PLDT_WEEKS = [
-    ['WE0606', 'JUNE'], ['WE0613', 'JUNE'], ['WE0620', 'JUNE'], ['WE0627', 'JUNE'],
-    ['WE0704', 'JULY'], ['WE0711', 'JULY'], ['WE0718', 'JULY']
-];
-const PLDT_MOCK_COMMENTS = [
-    'Agent missed validation procedures before proceeding with service reconfiguration.',
-    'Clear and empathetic delivery; structured pacing maintained during outage discussion.',
-    'System tagging missed on the primary customer account tool workspace.',
-    'Follow up ticket generated incorrectly under billing instead of technical dispatch.'
-];
-
-function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
-function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
-
-function generateMockDataset() {
-    const rows = [];
-    let counter = 1;
-
-    PLDT_AGENTS.forEach(agent => {
-        const totalAudits = randInt(4, 8);
-        const shuffledWeeks = [...PLDT_WEEKS].sort(() => Math.random() - 0.5).slice(0, totalAudits);
-
-        shuffledWeeks.forEach(([weekending, month]) => {
-            const scoreRoll = Math.random();
-            const overallScore = scoreRoll < 0.70 ? randInt(88, 100) : scoreRoll < 0.90 ? randInt(75, 87) : randInt(50, 74);
-            const deviation = () => Math.max(0, Math.min(100, overallScore + randInt(-5, 5)));
-
-            const row = {
-                'ID': 'ROW_' + counter++,
-                'FORM TYPE': pick(PLDT_FORM_TYPES),
-                'BRAND': pick(PLDT_BRANDS),
-                'LINE OF BUSINESS': 'Customer Service Tech Support',
-                'AGENT/OFFICER NAME': agent.name,
-                'AGENT TENURE': agent.tenure,
-                'TEAM LEADER': pick(PLDT_TLS),
-                'CLUSTER': pick(PLDT_CLUSTERS),
-                'WEEKENDING': weekending,
-                'MONTH': month,
-                'MISTREAT': '100%',
-                'RELIABLE': deviation(),
-                'PERSONABLE': deviation(),
-                'FAST': deviation(),
-                'SAFE & SECURE': deviation(),
-                'OVERALL SCORE': overallScore,
-                'EE number/ID number': String(9004100 + counter),
-                'OVERALL PASSRATE': overallScore >= 85 ? 'PASSED' : 'FAILED',
-                'CM': overallScore >= 90 ? 'SUPERSTAR' : 'UNDERPERFORMER',
-                'RELIABLE: ADDITIONAL COMMENTS': '',
-                'PERSONABLE: ADDITIONAL COMMENTS': '',
-                'FAST: ADDITIONAL COMMENTS': ''
-            };
-
-            HIT_PARAMS.forEach(p => {
-                row[p.col] = p.type === 'boolean' ? (p.hitValue === 'NO' ? 'YES' : 'NO') : 'NO OPPORTUNITY';
-            });
-
-            if (overallScore < 85) {
-                const targets = HIT_PARAMS.sort(() => Math.random() - 0.5).slice(0, randInt(1, 3));
-                targets.forEach(p => {
-                    row[p.col] = p.type === 'boolean' ? p.hitValue : pick(PLDT_MOCK_COMMENTS);
-                });
-                row['RELIABLE: ADDITIONAL COMMENTS'] = pick(PLDT_MOCK_COMMENTS);
+function parseWorkbookFile(file, preferSheetNameContains) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const data = new Uint8Array(e.target.result);
+                const wb = XLSX.read(data, { type: 'array' });
+                let sheetName = wb.SheetNames[0];
+                if (preferSheetNameContains) {
+                    const found = wb.SheetNames.find(n => n.toUpperCase().includes(preferSheetNameContains));
+                    if (found) sheetName = found;
+                }
+                const ws = wb.Sheets[sheetName];
+                const json = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
+                resolve(json);
+            } catch (err) {
+                reject(err);
             }
-
-            rows.push(row);
-        });
+        };
+        reader.onerror = reject;
+        reader.readAsArrayBuffer(file);
     });
-    return rows;
 }
 
-function regenerateMemoryDataset() {
-    cachedAuditRows = generateMockDataset();
-    filterData();
+function findHeader(row, candidates) {
+    const keys = Object.keys(row);
+    for (const cand of candidates) {
+        const hit = keys.find(k => k.trim().toLowerCase() === cand.toLowerCase());
+        if (hit) return hit;
+    }
+    for (const cand of candidates) {
+        const hit = keys.find(k => k.trim().toLowerCase().includes(cand.toLowerCase()));
+        if (hit) return hit;
+    }
+    return null;
 }
 
 /* ==========================================================================
-   NAVIGATION AND ENVIRONMENT LAYOUT CONTROL
+   ROSTER UPLOAD
    ========================================================================== */
-function enterDemo(role) {
-    if (role === 'supervisor') {
-        currentSession = { role: 'supervisor' };
-    } else {
-        const agentName = document.getElementById('demoAgentPicker').value;
-        currentSession = { role: 'agent', agentName };
+async function handleRosterUpload(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    document.getElementById('rosterStatus').textContent = 'Processing ' + file.name + '...';
+
+    try {
+        const rows = await parseWorkbookFile(file);
+        if (!rows.length) throw new Error('empty');
+
+        const emailKey = findHeader(rows[0], ['Email', 'Work Email']);
+        const nameKey = findHeader(rows[0], ['Agent Name', 'AGENT/OFFICER NAME', 'Name']);
+        const idKey = findHeader(rows[0], ['ID', 'Employee ID', 'EE number/ID number', 'Agent ID']);
+
+        if (!emailKey || !nameKey) throw new Error('missing columns');
+
+        const roster = rows
+            .map(r => ({
+                email: String(r[emailKey] || '').trim().toLowerCase(),
+                agentName: String(r[nameKey] || '').trim(),
+                agentId: idKey ? String(r[idKey] || '').trim() : ''
+            }))
+            .filter(r => r.email && r.agentName);
+
+        await clearCollection('roster');
+        await batchWriteDocs('roster', roster, (r) => r.email);
+
+        document.getElementById('rosterStatus').innerHTML = `✅ Roster loaded: ${roster.length} agents matched.`;
+    } catch (err) {
+        console.error(err);
+        document.getElementById('rosterStatus').innerHTML = `⚠️ Could not read roster. Expect columns: Email, Agent Name, ID.`;
     }
-    
-    document.getElementById('authScreen').style.display = 'none';
-    document.getElementById('appScreen').style.display = 'flex';
-    document.getElementById('sessionChip').style.display = 'flex';
-    
-    document.getElementById('sessionLabel').textContent = currentSession.role === 'supervisor' 
-        ? '👤 Corporate Supervisor' 
-        : `👤 Agent Account: ${currentSession.agentName}`;
+}
 
-    const isSupervisor = currentSession.role === 'supervisor';
-    document.getElementById('supervisorSidebar').style.display = isSupervisor ? 'flex' : 'none';
-    document.getElementById('supervisorView').style.display = isSupervisor ? 'flex' : 'none';
-    document.getElementById('agentView').style.display = isSupervisor ? 'none' : 'flex';
+async function refreshRosterStatus() {
+    const snap = await getDocs(collection(db, 'roster'));
+    if (snap.size) {
+        document.getElementById('rosterStatus').innerHTML = `✅ Roster loaded: ${snap.size} agents.`;
+    }
+}
 
-    if (isSupervisor) {
-        populateDropdownOptions(cachedAuditRows);
+async function resyncAgentEmails() {
+    const statusEl = document.getElementById('resyncStatus');
+    statusEl.textContent = 'Re-syncing...';
+
+    try {
+        const rosterSnap = await getDocs(collection(db, 'roster'));
+        const nameToEmail = {};
+        rosterSnap.forEach(d => {
+            const data = d.data();
+            nameToEmail[normalizeName(data.agentName)] = d.id;
+        });
+
+        const dataSnap = await getDocs(collection(db, 'auditData'));
+        const docs = dataSnap.docs;
+
+        let matched = 0, unmatched = 0;
+        const unmatchedNames = new Set();
+
+        for (let i = 0; i < docs.length; i += 400) {
+            const chunk = docs.slice(i, i + 400);
+            const batch = writeBatch(db);
+            chunk.forEach(d => {
+                const row = d.data();
+                const key = normalizeName(row['AGENT/OFFICER NAME']);
+                const email = nameToEmail[key] || '';
+                if (email) matched++; else { unmatched++; if (key) unmatchedNames.add(row['AGENT/OFFICER NAME']); }
+                batch.update(doc(db, 'auditData', d.id), { agentEmailLower: email });
+            });
+            await batch.commit();
+        }
+
+        let msg = `✅ Re-synced: ${matched} rows matched, ${unmatched} unmatched rows.`;
+        statusEl.textContent = msg;
+    } catch (err) {
+        console.error(err);
+        statusEl.textContent = '⚠️ Re-sync failed.';
+    }
+}
+
+/* ==========================================================================
+   RAW DATA UPLOAD
+   ========================================================================== */
+const NEEDED_FIELDS = [
+    'ID', 'FORM TYPE', 'BRAND', 'LINE OF BUSINESS', 'AGENT/OFFICER NAME', 'AGENT TENURE',
+    'TEAM LEADER', 'CLUSTER', 'WEEKENDING', 'MONTH', 'MISTREAT',
+    'RELIABLE', 'PERSONABLE', 'FAST', 'SAFE & SECURE', 'OVERALL SCORE',
+    'EE number/ID number', 'OVERALL PASSRATE', 'CM',
+    'RELIABLE: ADDITIONAL COMMENTS', 'PERSONABLE: ADDITIONAL COMMENTS', 'FAST: ADDITIONAL COMMENTS'
+].concat(HIT_PARAMS.map(p => p.col));
+
+async function handleDataUpload(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    document.getElementById('dataStatus').textContent = 'Processing ' + file.name + '...';
+
+    try {
+        const rows = await parseWorkbookFile(file, 'RAW');
+        if (!rows.length) throw new Error('empty');
+
+        const headerMap = {};
+        NEEDED_FIELDS.forEach(f => {
+            const h = findHeader(rows[0], [f]);
+            if (h) headerMap[f] = h;
+        });
+
+        const missingFields = NEEDED_FIELDS.filter(f => !headerMap[f]);
+
+        const rosterSnap = await getDocs(collection(db, 'roster'));
+        const nameToEmail = {};
+        rosterSnap.forEach(d => {
+            const data = d.data();
+            nameToEmail[normalizeName(data.agentName)] = d.id;
+        });
+
+        const UPPERCASE_FIELDS = ['FORM TYPE', 'MONTH', 'AGENT TENURE', 'OVERALL PASSRATE', 'CM'];
+        const TRIM_ONLY_FIELDS = ['BRAND', 'LINE OF BUSINESS', 'TEAM LEADER', 'CLUSTER', 'WEEKENDING'];
+
+        const trimmed = rows.map(r => {
+            const out = {};
+            NEEDED_FIELDS.forEach(f => {
+                const h = headerMap[f];
+                out[f] = h ? r[h] : '';
+            });
+            UPPERCASE_FIELDS.forEach(f => { out[f] = normVal(out[f]); });
+            TRIM_ONLY_FIELDS.forEach(f => { out[f] = String(out[f] || '').trim(); });
+            ['RELIABLE', 'PERSONABLE', 'FAST', 'SAFE & SECURE', 'OVERALL SCORE'].forEach(k => {
+                const n = parseFloat(out[k]);
+                out[k] = isNaN(n) ? null : (n <= 1 ? n * 100 : n);
+            });
+            out.agentEmailLower = nameToEmail[normalizeName(out['AGENT/OFFICER NAME'])] || '';
+            return out;
+        }).filter(r => r['AGENT/OFFICER NAME']);
+
+        const hasIdColumn = !!headerMap['ID'];
+        const seenKeys = new Set();
+        const deduped = [];
+        trimmed.forEach(row => {
+            const key = hasIdColumn ? String(row['ID']) : NEEDED_FIELDS.map(f => String(row[f])).join('||');
+            if (seenKeys.has(key)) return;
+            seenKeys.add(key);
+            deduped.push(row);
+        });
+        const dupCount = trimmed.length - deduped.length;
+
+        await replaceAuditData(deduped);
+
+        cachedAuditRows = deduped; 
+        let msg = `✅ ${deduped.length} rows loaded.`;
+        document.getElementById('dataStatus').innerHTML = msg;
+        populateDropdownOptions(trimmed);
         filterData();
-    } else {
-        renderAgentView();
+    } catch (err) {
+        console.error(err);
+        document.getElementById('dataStatus').innerHTML = `⚠️ Could not read this file.`;
     }
 }
 
-function logout() {
-    currentSession = null;
-    document.getElementById('appScreen').style.display = 'none';
-    document.getElementById('authScreen').style.display = 'flex';
-    document.getElementById('sessionChip').style.display = 'none';
-}
-
+/* ==========================================================================
+   SUPERVISOR DASHBOARD — FILTERS + RENDER
+   ========================================================================== */
 function populateDropdownOptions(rows) {
-    const selectorMapping = {
+    const map = {
         selectFormType: 'FORM TYPE',
         selectBrand: 'BRAND',
         selectMonth: 'MONTH',
@@ -195,13 +553,26 @@ function populateDropdownOptions(rows) {
         selectTenure: 'AGENT TENURE',
         selectTeamLeader: 'TEAM LEADER'
     };
-    Object.entries(selectorMapping).forEach(([elementId, dataField]) => {
-        const element = document.getElementById(elementId);
-        const previousSelection = element.value;
-        const distinctValues = [...new Set(rows.map(r => r[dataField]).filter(Boolean))].sort();
-        element.innerHTML = `<option value="ALL">(All Options)</option>` + distinctValues.map(v => `<option value="${v}">${v}</option>`).join('');
-        if (distinctValues.includes(previousSelection)) element.value = previousSelection;
+    Object.entries(map).forEach(([selId, field]) => {
+        const sel = document.getElementById(selId);
+        const current = sel.value;
+        const uniques = [...new Set(rows.map(r => r[field]).filter(Boolean))].sort();
+        sel.innerHTML = `<option value="ALL">(All)</option>` + uniques.map(v => `<option value="${v}">${v}</option>`).join('');
+        if (uniques.includes(current)) sel.value = current;
     });
+}
+
+let cachedAuditRows = [];
+
+async function loadAllAuditData() {
+    const snap = await getDocs(collection(db, 'auditData'));
+    cachedAuditRows = snap.docs.map(d => d.data());
+    return cachedAuditRows;
+}
+
+function toggleUploadPanel() {
+    const panel = document.getElementById('uploadPopover');
+    panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
 }
 
 function resetFilters() {
@@ -211,7 +582,10 @@ function resetFilters() {
 }
 
 function filterData() {
-    const conditions = {
+    const rows = cachedAuditRows;
+    if (!rows.length) return;
+
+    const f = {
         formType: document.getElementById('selectFormType').value,
         brand: document.getElementById('selectBrand').value,
         month: document.getElementById('selectMonth').value,
@@ -220,136 +594,162 @@ function filterData() {
         teamLeader: document.getElementById('selectTeamLeader').value
     };
 
-    const filtered = cachedAuditRows.filter(r =>
-        (conditions.formType === 'ALL' || r['FORM TYPE'] === conditions.formType) &&
-        (conditions.brand === 'ALL' || r['BRAND'] === conditions.brand) &&
-        (conditions.month === 'ALL' || r['MONTH'] === conditions.month) &&
-        (conditions.weekending === 'ALL' || r['WEEKENDING'] === conditions.weekending) &&
-        (conditions.tenure === 'ALL' || r['AGENT TENURE'] === conditions.tenure) &&
-        (conditions.teamLeader === 'ALL' || r['TEAM LEADER'] === conditions.teamLeader)
+    const filtered = rows.filter(r =>
+        (f.formType === 'ALL' || r['FORM TYPE'] === f.formType) &&
+        (f.brand === 'ALL' || r['BRAND'] === f.brand) &&
+        (f.month === 'ALL' || r['MONTH'] === f.month) &&
+        (f.weekending === 'ALL' || r['WEEKENDING'] === f.weekending) &&
+        (f.tenure === 'ALL' || r['AGENT TENURE'] === f.tenure) &&
+        (f.teamLeader === 'ALL' || r['TEAM LEADER'] === f.teamLeader)
     );
 
     renderSupervisorDashboard(filtered);
 }
 
 function tenureBucket(tenureStr) {
-    const clean = normVal(tenureStr);
-    if (clean.includes('0-30')) return 'b1';
-    if (clean.includes('31-90') || clean.includes('31-60')) return 'b2';
+    const t = normVal(tenureStr);
+    if (t.includes('0-30')) return 'b1';
+    if (t.includes('31-60') || t.includes('61-90') || t.includes('31-90')) return 'b2';
     return 'b3';
 }
 
-/* ==========================================================================
-   VISUAL MATRIX MATRIX CALCULATORS
-   ========================================================================== */
 function renderSupervisorDashboard(data) {
     if (!data.length) {
         document.getElementById('totalPassRateVal').textContent = '-';
         document.getElementById('totalFailRateVal').textContent = '-';
+        document.getElementById('cmSuperstarVal').textContent = '-';
+        document.getElementById('cmUnderperformerVal').textContent = '-';
+        document.getElementById('leaderChart').innerHTML = '<div class="empty-note">No matching data.</div>';
+        document.getElementById('parameterChart').innerHTML = '<div class="empty-note">No matching data.</div>';
         return;
     }
 
-    const computeAverage = (key) => {
-        const subset = data.map(r => r[key]).filter(v => v !== null && v !== undefined && !isNaN(v));
-        return subset.length ? Math.round(subset.reduce((a, b) => a + b, 0) / subset.length) : null;
+    const avg = (key) => {
+        const vals = data.map(r => r[key]).filter(v => v !== null && v !== undefined && !isNaN(v));
+        if (!vals.length) return null;
+        return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
     };
 
-    // Update Core Parameter Bar Charts
-    const updateUiBar = (valueElement, barElement, evaluatedScore) => {
-        document.getElementById(valueElement).textContent = evaluatedScore === null ? '-' : evaluatedScore + '%';
-        document.getElementById(barElement).style.height = (evaluatedScore || 0) + '%';
-    };
-    updateUiBar('valReliable', 'barReliable', computeAverage('RELIABLE'));
-    updateUiBar('valPersonable', 'barPersonable', computeAverage('PERSONABLE'));
-    updateUiBar('valFast', 'barFast', computeAverage('FAST'));
-    updateUiBar('valSecure', 'barSecure', computeAverage('SAFE & SECURE'));
-    updateUiBar('valOverall', 'barOverall', computeAverage('OVERALL SCORE'));
+    const avgOverall = avg('OVERALL SCORE');
 
-    // Pass Fail Metrics
-    const totalPassed = data.filter(r => r['OVERALL PASSRATE'] === 'PASSED').length;
-    const computedPassRate = Math.round((totalPassed / data.length) * 100);
-    document.getElementById('totalPassRateVal').textContent = computedPassRate + '%';
-    document.getElementById('totalFailRateVal').textContent = (100 - computedPassRate) + '%';
+    const lobScores = {};
+    data.forEach(r => {
+        const lob = r['BRAND'] || 'Unspecified';
+        if (!lobScores[lob]) lobScores[lob] = { total: 0, count: 0 };
+        if (r['OVERALL SCORE'] !== null && r['OVERALL SCORE'] !== undefined) {
+            lobScores[lob].total += r['OVERALL SCORE'];
+            lobScores[lob].count++;
+        }
+    });
+    const lobColors = ['#123e25', '#226f43', '#005a2b', '#8fa799', '#b1cfbe'];
+    const parameterChart = document.getElementById('parameterChart');
+    const lobNames = Object.keys(lobScores).sort();
+    parameterChart.innerHTML = lobNames.map((lob, i) => {
+        const s = lobScores[lob];
+        const a = s.count ? Math.round(s.total / s.count) : 0;
+        return `<div class="bar-wrapper">
+            <div class="bar-value">${a}%</div>
+            <div class="bar" style="background:${lobColors[i % lobColors.length]};height:${a}%;"></div>
+            <div class="bar-label">${escapeHtml(lob)}</div>
+        </div>`;
+    }).join('');
 
-    // Tenure Grid Metrics
+    const isPassed = (r) => r['OVERALL PASSRATE'] ? r['OVERALL PASSRATE'] === 'PASSED' : (r['OVERALL SCORE'] || 0) >= 85;
+    const passed = data.filter(isPassed).length;
+    const passPct = Math.round((passed / data.length) * 100);
+    document.getElementById('totalPassRateVal').textContent = passPct + '%';
+    document.getElementById('totalFailRateVal').textContent = (100 - passPct) + '%';
+
     const buckets = { b1: [], b2: [], b3: [] };
     data.forEach(r => buckets[tenureBucket(r['AGENT TENURE'])].push(r));
-    
-    const resolveBucketStats = (arr) => {
-        const actualScores = arr.map(r => r['OVERALL SCORE']).filter(v => !isNaN(v) && v !== null);
-        return actualScores.length ? Math.round(actualScores.reduce((a, b) => a + b, 0) / actualScores.length) + '%' : '-';
+    const bucketAvg = (arr) => {
+        const vals = arr.map(r => r['OVERALL SCORE']).filter(v => v !== null && v !== undefined && !isNaN(v));
+        return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) + '%' : '-';
     };
-
-    document.getElementById('totalAuditNhip').textContent = buckets.b1.length;
-    document.getElementById('totalAudit31').textContent = buckets.b2.length;
-    document.getElementById('totalAudit91').textContent = buckets.b3.length;
+    document.getElementById('totalAuditNhip').textContent = buckets.b1.length || '-';
+    document.getElementById('totalAudit31').textContent = buckets.b2.length || '-';
+    document.getElementById('totalAudit91').textContent = buckets.b3.length || '-';
     document.getElementById('totalAuditTotal').textContent = data.length;
+    document.getElementById('totalAvgNhip').textContent = bucketAvg(buckets.b1);
+    document.getElementById('totalAvg31').textContent = bucketAvg(buckets.b2);
+    document.getElementById('totalAvg91').textContent = bucketAvg(buckets.b3);
+    document.getElementById('totalAvgTotal').textContent = avgOverall === null ? '-' : avgOverall + '%';
 
-    document.getElementById('totalAvgNhip').textContent = resolveBucketStats(buckets.b1);
-    document.getElementById('totalAvg31').textContent = resolveBucketStats(buckets.b2);
-    document.getElementById('totalAvg91').textContent = resolveBucketStats(buckets.b3);
-    document.getElementById('totalAvgTotal').textContent = computeAverage('OVERALL SCORE') + '%';
+    const cmRows = data.filter(r => r['CM']);
+    if (cmRows.length) {
+        const superstar = cmRows.filter(r => r['CM'] === 'SUPERSTAR').length;
+        document.getElementById('cmSuperstarVal').textContent = Math.round((superstar / cmRows.length) * 100) + '%';
+        document.getElementById('cmUnderperformerVal').textContent = Math.round(((cmRows.length - superstar) / cmRows.length) * 100) + '%';
+    }
 
-    // CM Assessment Row Calculation Elements
-    const superstars = data.filter(r => r['CM'] === 'SUPERSTAR').length;
-    document.getElementById('cmSuperstarVal').textContent = Math.round((superstars / data.length) * 100) + '%';
-    document.getElementById('cmUnderperformerVal').textContent = Math.round(((data.length - superstars) / data.length) * 100) + '%';
-
-    // Scores Per Team Leader Chart Builder
-    const leaderRecords = {};
+    const tlScores = {};
     data.forEach(r => {
-        const leader = r['TEAM LEADER'] || 'Unassigned Leader';
-        if (!leaderRecords[leader]) leaderRecords[leader] = { sum: 0, cases: 0 };
-        leaderRecords[leader].sum += r['OVERALL SCORE'];
-        leaderRecords[leader].cases++;
+        const tl = r['TEAM LEADER'] || 'Unassigned';
+        if (!tlScores[tl]) tlScores[tl] = { total: 0, count: 0 };
+        if (r['OVERALL SCORE'] !== null) { tlScores[tl].total += r['OVERALL SCORE']; tlScores[tl].count++; }
     });
-    document.getElementById('leaderChart').innerHTML = Object.entries(leaderRecords).map(([name, dataObj]) => {
-        const scorePct = Math.round(dataObj.sum / dataObj.cases);
+    const leaderChart = document.getElementById('leaderChart');
+    leaderChart.innerHTML = Object.entries(tlScores).map(([tl, s]) => {
+        const a = s.count ? Math.round(s.total / s.count) : 0;
         return `<div class="horizontal-bar-row">
-            <div class="horizontal-label">${name}</div>
-            <div class="horizontal-bar-container"><div class="horizontal-bar-fill" style="width:${scorePct}%;">${scorePct}%</div></div>
+            <div class="horizontal-label" title="${tl}">${tl}</div>
+            <div class="horizontal-bar-container"><div class="horizontal-bar-fill" style="width:${a}%;">${a}%</div></div>
         </div>`;
     }).join('');
 
-    // Scores Per Operational Cluster Chart Builder
-    const clusterRecords = {};
-    data.forEach(r => {
-        const cluster = r['CLUSTER'] || 'Unassigned Cluster';
-        if (!clusterRecords[cluster]) clusterRecords[cluster] = { sum: 0, cases: 0 };
-        clusterRecords[cluster].sum += r['OVERALL SCORE'];
-        clusterRecords[cluster].cases++;
-    });
-    document.getElementById('clusterChart').innerHTML = Object.entries(clusterRecords).map(([name, dataObj]) => {
-        const scorePct = Math.round(dataObj.sum / dataObj.cases);
-        return `<div class="horizontal-bar-row">
-            <div class="horizontal-label">${name}</div>
-            <div class="horizontal-bar-container"><div class="horizontal-bar-fill" style="width:${scorePct}%; background:#1a1a1a;">${scorePct}%</div></div>
-        </div>`;
-    }).join('');
-
-    // Frequency Analysis Breakdown Counter
-    const parameterHits = {};
+    const hitCounts = {};
     data.forEach(r => {
         getRowIssues(r).forEach(issue => {
-            const combinedKey = issue.label + '||' + issue.category;
-            parameterHits[combinedKey] = (parameterHits[combinedKey] || 0) + 1;
+            const key = issue.label + '||' + issue.category;
+            hitCounts[key] = (hitCounts[key] || 0) + 1;
         });
     });
-    const rankedParameters = Object.entries(parameterHits).sort((x, y) => y[1] - x[1]).slice(0, 5);
-    const hitListBody = document.getElementById('topHitsTable').querySelector('tbody');
-    hitListBody.innerHTML = rankedParameters.length 
-        ? rankedParameters.map(([combinedKey, count]) => {
-            const [label, category] = combinedKey.split('||');
-            return `<tr><td>${label}</td><td><span class="tag ${category}">${category}</span></td><td><b>${count}</b> iterations</td></tr>`;
-        }).join('')
-        : '<tr><td colspan="3" class="empty-note">No structural variances flagged inside current configuration.</td></tr>';
+    const sortedHits = Object.entries(hitCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    const tbody = document.getElementById('topHitsTable').querySelector('tbody');
+    tbody.innerHTML = sortedHits.map(([key, count]) => {
+        const [label, category] = key.split('||');
+        return `<tr><td style="text-align:left;">${label}</td><td>${category}</td><td>${count}</td></tr>`;
+    }).join('');
+
+    const distBuckets = [
+        { label: '90–100%', test: s => s >= 90 },
+        { label: '80–89%', test: s => s >= 80 && s < 90 },
+        { label: '70–79%', test: s => s >= 70 && s < 80 },
+        { label: '60–69%', test: s => s >= 60 && s < 70 },
+        { label: 'Below 60%', test: s => s < 60 }
+    ];
+    const clusterRows = {};
+    data.forEach(r => {
+        const c = r['CLUSTER'] || 'Unassigned';
+        if (r['OVERALL SCORE'] === null || r['OVERALL SCORE'] === undefined) return;
+        if (!clusterRows[c]) clusterRows[c] = [];
+        clusterRows[c].push(r['OVERALL SCORE']);
+    });
+    const clusterDistBody = document.getElementById('clusterDistTable').querySelector('tbody');
+    const clusterNames = Object.keys(clusterRows).sort();
+    clusterDistBody.innerHTML = clusterNames.map(c => {
+        const scores = clusterRows[c];
+        const total = scores.length;
+        const pctCells = distBuckets.map(b => {
+            const count = scores.filter(b.test).length;
+            const pct = total ? Math.round((count / total) * 100) : 0;
+            return `<td>${pct}%</td>`;
+        }).join('');
+        return `<tr><td style="font-weight:bold;">${c}</td>${pctCells}<td>${total}</td></tr>`;
+    }).join('');
 }
 
-function renderAgentView() {
-    document.getElementById('agentWelcomeName').textContent = 'Welcome, ' + currentSession.agentName;
-    const personalRows = cachedAuditRows.filter(r => r['AGENT/OFFICER NAME'] === currentSession.agentName);
+/* ==========================================================================
+   AGENT VIEW
+   ========================================================================== */
+async function renderAgentView() {
+    document.getElementById('agentWelcomeName').textContent = 'Welcome, ' + (currentSession.agentName || currentSession.email);
 
-    if (!personalRows.length) {
+    const q = query(collection(db, 'auditData'), where('agentEmailLower', '==', currentSession.email));
+    const snap = await getDocs(q);
+    const myRows = snap.docs.map(d => d.data());
+
+    if (!myRows.length) {
         document.getElementById('agentEmptyState').style.display = 'block';
         document.getElementById('agentContent').style.display = 'none';
         return;
@@ -358,54 +758,93 @@ function renderAgentView() {
     document.getElementById('agentEmptyState').style.display = 'none';
     document.getElementById('agentContent').style.display = 'flex';
 
-    const getAgentAverage = (key) => {
-        const validValues = personalRows.map(r => r[key]).filter(v => v !== null && !isNaN(v));
-        return validValues.length ? Math.round(validValues.reduce((a, b) => a + b, 0) / validValues.length) + '%' : '-';
+    const avg = (key) => {
+        const vals = myRows.map(r => r[key]).filter(v => v !== null && v !== undefined && !isNaN(v));
+        return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
     };
 
-    const categories = [
-        { label: 'Reliable Component', val: getAgentAverage('RELIABLE') },
-        { label: 'Personable Attribute', val: getAgentAverage('PERSONABLE') },
-        { label: 'Fast Delivery', val: getAgentAverage('FAST') },
-        { label: 'Safe & Secure Policy', val: getAgentAverage('SAFE & SECURE') },
-        { label: 'Overall Quality Score', val: getAgentAverage('OVERALL SCORE') }
+    const tiles = [
+        { label: 'Reliable', val: avg('RELIABLE') },
+        { label: 'Personable', val: avg('PERSONABLE') },
+        { label: 'Fast', val: avg('FAST') },
+        { label: 'Safe & Secure', val: avg('SAFE & SECURE') },
+        { label: 'Overall Score', val: avg('OVERALL SCORE') }
     ];
-
-    document.getElementById('agentScorecard').innerHTML = categories.map(cat =>
-        `<div class="score-tile"><div class="num">${cat.val}</div><div class="lbl">${cat.label}</div></div>`
+    document.getElementById('agentScorecard').innerHTML = tiles.map(t =>
+        `<div class="score-tile"><div class="num">${t.val === null ? '-' : t.val + '%'}</div><div class="lbl">${t.label}</div></div>`
     ).join('');
 
-    const chronologicallyOrdered = [...personalRows].sort((m, n) => String(n['WEEKENDING']).localeCompare(String(m['WEEKENDING'])));
+    const sorted = [...myRows].sort((a, b) => String(b['WEEKENDING'] || '').localeCompare(String(a['WEEKENDING'] || '')));
 
-    document.getElementById('agentAuditList').innerHTML = chronologicallyOrdered.map(r => {
-        const localVariances = getRowIssues(r);
-        const tagsLayout = localVariances.length 
-            ? localVariances.map(v => `<span class="tag ${v.category}">${escapeHtml(v.label)}</span>`).join('')
-            : '<span class="no-issues-note">✓ Performance target fully realized on this transaction file instance.</span>';
+    const auditRowHtml = (r) => {
+        const issues = getRowIssues(r);
+        const score = r['OVERALL SCORE'];
+        const passed = r['OVERALL PASSRATE'] ? r['OVERALL PASSRATE'] === 'PASSED' : (score !== null && score >= 85);
+        const tagsHtml = issues.length
+            ? issues.map(i => `<span class="tag ${i.category.replace(/\s|&/g, '')}">${escapeHtml(i.label)}</span>`).join('')
+            : `<span class="no-issues-note">✓ No parameters flagged on this audit.</span>`;
+
+        const comments = ['RELIABLE: ADDITIONAL COMMENTS', 'PERSONABLE: ADDITIONAL COMMENTS', 'FAST: ADDITIONAL COMMENTS']
+            .map(f => String(r[f] || '').trim())
+            .filter(c => c && !NON_ISSUE_VALUES.has(c.toUpperCase()));
+        const commentsHtml = comments.length
+            ? `<div class="audit-comments">${comments.map(c => `<p>${escapeHtml(c)}</p>`).join('')}</div>`
+            : '';
 
         return `<div class="audit-row">
             <div class="audit-head">
-                <span>Timeline Target: ${escapeHtml(r['WEEKENDING'])} · Segment Context: ${escapeHtml(r['BRAND'])}</span>
-                <span class="score-pill ${r['OVERALL PASSRATE'] === 'PASSED' ? 'pass-pill' : 'fail-pill'}">${r['OVERALL SCORE']}%</span>
+                <span>${escapeHtml(r['WEEKENDING'])} · ${escapeHtml(r['FORM TYPE'])} · ${escapeHtml(r['BRAND'])}</span>
+                <span class="score-pill ${passed ? 'pass-pill' : 'fail-pill'}">${score === null ? '-' : score + '%'}</span>
             </div>
-            <div class="audit-meta">Supervisor Assignment Line: ${escapeHtml(r['TEAM LEADER'])} · Org Unit: ${escapeHtml(r['CLUSTER'])}</div>
-            <div style="margin-top: 8px;">${tagsLayout}</div>
+            <div class="audit-meta">Team Leader: ${escapeHtml(r['TEAM LEADER']) || '—'} · Cluster: ${escapeHtml(r['CLUSTER']) || '—'}</div>
+            <div>${tagsHtml}</div>
+            ${commentsHtml}
         </div>`;
+    };
+
+    const groups = {};
+    sorted.forEach(r => {
+        const m = normVal(r['MONTH']) || 'UNSPECIFIED';
+        if (!groups[m]) groups[m] = [];
+        groups[m].push(r);
+    });
+
+    const orderedMonths = Object.keys(groups).sort((a, b) => {
+        const aMax = groups[a].reduce((mx, r) => String(r['WEEKENDING'] || '') > mx ? String(r['WEEKENDING'] || '') : mx, '');
+        const bMax = groups[b].reduce((mx, r) => String(r['WEEKENDING'] || '') > mx ? String(r['WEEKENDING'] || '') : mx, '');
+        return bMax.localeCompare(aMax);
+    });
+
+    document.getElementById('agentAuditList').innerHTML = orderedMonths.map((month, idx) => {
+        const rows = groups[month];
+        const monthAvg = (() => {
+            const vals = rows.map(r => r['OVERALL SCORE']).filter(v => v !== null && v !== undefined && !isNaN(v));
+            return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
+        })();
+        return `<details class="month-group" ${idx === 0 ? 'open' : ''}>
+            <summary class="month-summary">
+                <span>${month} <span class="month-count">(${rows.length} audit${rows.length === 1 ? '' : 's'})</span></span>
+                <span class="month-avg">${monthAvg === null ? '' : 'avg ' + monthAvg + '%'}</span>
+            </summary>
+            <div class="month-body">${rows.map(auditRowHtml).join('')}</div>
+        </details>`;
     }).join('');
 }
 
 /* ==========================================================================
-   INITIALIZATION APPLICATION ENTRY HOOKS
+   EXPOSE TO WINDOW
    ========================================================================== */
-window.enterDemo = enterDemo;
+window.switchAuthTab = switchAuthTab;
+window.setSignupRole = setSignupRole;
+window.handleSignup = handleSignup;
+window.handleLogin = handleLogin;
 window.logout = logout;
 window.filterData = filterData;
 window.resetFilters = resetFilters;
-window.regenerateMemoryDataset = regenerateMemoryDataset;
+window.toggleUploadPanel = toggleUploadPanel;
+window.handleRosterUpload = handleRosterUpload;
+window.handleDataUpload = handleDataUpload;
+window.resyncAgentEmails = resyncAgentEmails;
 
-// Self invoking initial bootstrapping sequence
-document.addEventListener('DOMContentLoaded', () => {
-    cachedAuditRows = generateMockDataset();
-    const agentSelector = document.getElementById('demoAgentPicker');
-    agentSelector.innerHTML = PLDT_AGENTS.map(a => `<option value="${a.name}">${a.name} (${a.tenure})</option>`).join('');
-});
+// Initialize
+setSignupRole('agent');
