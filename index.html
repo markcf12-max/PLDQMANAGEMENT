@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PLDT Quality Score and Cluster Management Dashboard</title>
 <link rel="stylesheet" href="styles.css">
-<script src="script.js"></script>
+<script src="script.js" defer></script>
 </head>
 <body>
 
@@ -13,7 +13,7 @@
 <div class="header-banner">
     <div class="header-left">
         <span class="header-logo">PLDT</span>
-        <span style="font-size: 12px; font-weight: bold; color: var(--gold); border-left: 1px solid var(--pldt-blue-light); padding-left: 12px;">Enterprise</span>
+        <span style="font-size: 12px; font-weight: bold; color: var(--gold); border-left: 1px solid rgba(255,255,255,0.5); padding-left: 12px;">Enterprise</span>
     </div>
     <div class="header-title">
         <h1>PLDT Quality Score and Cluster Management</h1>
@@ -41,7 +41,7 @@
                 <label>Or view as a specific agent</label>
                 <select id="demoAgentPicker"></select>
             </div>
-            <button class="btn-primary" style="background: var(--pldt-blue);" onclick="enterDemo('agent')">View Agent Dashboard</button>
+            <button class="btn-primary" style="background: #1a1a1a;" onclick="enterDemo('agent')">View Agent Dashboard</button>
 
             <div class="auth-hint">
                 All names, scores, and comments shown here are randomly generated for demonstration purposes only and don't reflect real agents or audits.
@@ -168,9 +168,9 @@
                     <div class="chart-title">Quality Score Per Parameter</div>
                     <div class="bar-chart-container" id="parameterChart">
                         <div class="bar-wrapper"><div class="bar-value" id="valReliable">-</div><div class="bar" id="barReliable" style="background:#f0c4c9;height:0%;"></div><div class="bar-label">Reliable</div></div>
-                        <div class="bar-wrapper"><div class="bar-value" id="valPersonable">-</div><div class="bar" id="barPersonable" style="background:#c9d9ef;height:0%;"></div><div class="bar-label">Personable</div></div>
-                        <div class="bar-wrapper"><div class="bar-value" id="valFast">-</div><div class="bar" id="barFast" style="background:#002f6c;height:0%;"></div><div class="bar-label">Fast</div></div>
-                        <div class="bar-wrapper"><div class="bar-value" id="valSecure">-</div><div class="bar" id="barSecure" style="background:#0057b8;height:0%;"></div><div class="bar-label">Safe &amp; Secure</div></div>
+                        <div class="bar-wrapper"><div class="bar-value" id="valPersonable">-</div><div class="bar" id="barPersonable" style="background:#e6e6e6;height:0%;"></div><div class="bar-label">Personable</div></div>
+                        <div class="bar-wrapper"><div class="bar-value" id="valFast">-</div><div class="bar" id="barFast" style="background:#7a0f1e;height:0%;"></div><div class="bar-label">Fast</div></div>
+                        <div class="bar-wrapper"><div class="bar-value" id="valSecure">-</div><div class="bar" id="barSecure" style="background:#1a1a1a;height:0%;"></div><div class="bar-label">Safe &amp; Secure</div></div>
                         <div class="bar-wrapper"><div class="bar-value" id="valOverall">-</div><div class="bar" id="barOverall" style="background:#C8102E;height:0%;"></div><div class="bar-label">Overall</div></div>
                     </div>
                 </div>
