@@ -1,11 +1,9 @@
 /* ==========================================================================
-   PLDT QUALITY SCORE DASHBOARD — LIVE DEMO BUILD
-   No backend, no accounts. All data below is randomly generated on load.
+   PLDT QUALITY SCORE DASHBOARD — RUNTIME BUILD
    ========================================================================== */
 
-let currentSession = null; // { role: 'supervisor' | 'agent', agentName? }
+let currentSession = null; 
 let cachedAuditRows = [];
-
 
 const NON_ISSUE_VALUES = new Set(['', 'NO OPPORTUNITY', 'NA', 'N/A', 'NO', 'NONE']);
 
@@ -40,20 +38,6 @@ function normVal(v) {
     return (v === undefined || v === null) ? '' : String(v).trim().toUpperCase();
 }
 
-/* Forgiving name comparison for matching roster entries to raw-data rows.
-   Strips accents/diacritics (Muñoz -> Munoz), punctuation, common suffixes
-   (Jr., Sr., II, III), and collapses extra whitespace — so small spelling
-   differences between the two files don't break the match. */
-function normalizeName(str) {
-    return String(str || '')
-        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-        .toUpperCase()
-        .replace(/[.,'-]/g, ' ')
-        .replace(/\b(JR|SR|II|III|IV)\b/g, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
 function getRowIssues(row) {
     const issues = [];
     HIT_PARAMS.forEach(p => {
@@ -65,10 +49,6 @@ function getRowIssues(row) {
             if (v === p.hitValue) issues.push({ label: p.label, category: p.category });
             return;
         }
-
-        // descriptive: anything that isn't a known "no issue" marker is a hit.
-        // If the cell has real text beyond a bare "Yes", show that instead of
-        // the generic label — it's the actual reason the auditor wrote down.
         if (!NON_ISSUE_VALUES.has(v)) {
             const detail = v !== 'YES' ? String(raw).trim() : '';
             issues.push({ label: detail ? `${p.label} — ${detail}` : p.label, category: p.category });
@@ -78,119 +58,97 @@ function getRowIssues(row) {
 }
 
 /* ==========================================================================
-   FILE PARSING (SheetJS handles both CSV and XLSX)
+   STANDALONE DATA GENERATION ENGINE
    ========================================================================== */
-
-/* ==========================================================================
-   MOCK DATA GENERATION
-   ========================================================================== */
-const DEMO_AGENTS = [
-    { name: 'Santos, Maria Cristina', tenure: '>91 DAYS' },
-    { name: 'Reyes, Mark Anthony', tenure: '>91 DAYS' },
-    { name: 'Dela Cruz, Angelica', tenure: '31-60 DAYS' },
-    { name: 'Bautista, Miguel', tenure: '>91 DAYS' },
-    { name: 'Garcia, Kristine Joy', tenure: '0-30 DAYS' },
-    { name: 'Mendoza, Paolo', tenure: '>91 DAYS' },
-    { name: 'Torres, Angeline', tenure: '31-60 DAYS' },
-    { name: 'Ramos, Christian', tenure: '>91 DAYS' },
-    { name: 'Flores, Bianca', tenure: '>91 DAYS' },
-    { name: 'Aquino, Rafael', tenure: '0-30 DAYS' },
-    { name: 'Villanueva, Samantha', tenure: '>91 DAYS' },
-    { name: 'Castillo, Enzo', tenure: '31-60 DAYS' }
+const PLDT_AGENTS = [
+    { name: 'Dela Cruz, Juan', tenure: '>91 DAYS' },
+    { name: 'Santos, Maria', tenure: '>91 DAYS' },
+    { name: 'Reyes, Aldrin', tenure: '31-90 DAYS' },
+    { name: 'Bautista, Elisa', tenure: '0-30 DAYS' },
+    { name: 'Aquino, Paolo', tenure: '>91 DAYS' },
+    { name: 'Alvarez, Glenn', tenure: '31-90 DAYS' }
 ];
-const DEMO_TEAM_LEADERS = ['Fernandez, Ma. Luisa', 'Domingo, Kevin', 'Salazar, Patricia', 'Navarro, Justin'];
-const DEMO_CLUSTERS = ['A', 'B', 'C', 'D'];
-const DEMO_BRANDS = ['PLDT HOME', 'PLDT ENTERPRISE'];
-const DEMO_FORM_TYPES = ['Program Level', 'Agent Level'];
-const DEMO_WEEKS = [
-    ['WE0503', 'MAY'], ['WE0510', 'MAY'], ['WE0517', 'MAY'], ['WE0524', 'MAY'], ['WE0531', 'MAY'],
-    ['WE0607', 'JUNE'], ['WE0614', 'JUNE'], ['WE0621', 'JUNE'], ['WE0628', 'JUNE'],
-    ['WE0705', 'JULY'], ['WE0712', 'JULY'], ['WE0719', 'JULY']
+const PLDT_TLS = ['TL Cruz, Jennifer', TL_Pascual_Marvin = 'TL Pascual, Marvin', 'TL Soriano, Rachel'];
+const PLDT_CLUSTERS = ['Cluster Alpha', 'Cluster Beta', 'Cluster Gamma'];
+const PLDT_BRANDS = ['PLDT Home DSL/Fibr', 'PLDT Enterprise Voice', 'PLDT Mobile Data'];
+const PLDT_FORM_TYPES = ['Voice Call Form', 'Digital Chat Form'];
+const PLDT_WEEKS = [
+    ['WE0606', 'JUNE'], ['WE0613', 'JUNE'], ['WE0620', 'JUNE'], ['WE0627', 'JUNE'],
+    ['WE0704', 'JULY'], ['WE0711', 'JULY'], ['WE0718', 'JULY']
 ];
-const DEMO_REMARKS = [
-    'Agent provided incomplete information regarding the service downgrade request.',
-    'Customer had to repeat the concern twice before the agent fully understood the issue.',
-    'Agent used dismissive language when the customer raised a billing complaint.',
-    'Resolution offered did not match what the customer actually asked for.',
-    'Agent did not confirm the customer\'s account details before discussing the case.',
-    'Ticket was not created despite the customer requesting a follow-up.',
-    'Agent sounded rushed and did not fully explain the next steps to the customer.',
-    'Correct process was followed, but the explanation given was unclear.'
+const PLDT_MOCK_COMMENTS = [
+    'Agent missed validation procedures before proceeding with service reconfiguration.',
+    'Clear and empathetic delivery; structured pacing maintained during outage discussion.',
+    'System tagging missed on the primary customer account tool workspace.',
+    'Follow up ticket generated incorrectly under billing instead of technical dispatch.'
 ];
 
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
 
-function generateMockData() {
+function generateMockDataset() {
     const rows = [];
-    let idCounter = 1;
+    let counter = 1;
 
-    DEMO_AGENTS.forEach(agent => {
-        const auditCount = randInt(3, 7);
-        const weeksForAgent = [...DEMO_WEEKS].sort(() => Math.random() - 0.5).slice(0, auditCount);
+    PLDT_AGENTS.forEach(agent => {
+        const totalAudits = randInt(4, 8);
+        const shuffledWeeks = [...PLDT_WEEKS].sort(() => Math.random() - 0.5).slice(0, totalAudits);
 
-        weeksForAgent.forEach(([weekending, month]) => {
-            const roll = Math.random();
-            // weighted: 65% clean/high score, 22% mid, 13% low
-            const overall = roll < 0.65 ? randInt(90, 100) : roll < 0.87 ? randInt(75, 89) : randInt(40, 74);
-            const jitter = () => Math.max(0, Math.min(100, overall + randInt(-6, 6)));
+        shuffledWeeks.forEach(([weekending, month]) => {
+            const scoreRoll = Math.random();
+            const overallScore = scoreRoll < 0.70 ? randInt(88, 100) : scoreRoll < 0.90 ? randInt(75, 87) : randInt(50, 74);
+            const deviation = () => Math.max(0, Math.min(100, overallScore + randInt(-5, 5)));
 
             const row = {
-                'FORM TYPE': pick(DEMO_FORM_TYPES),
-                'BRAND': pick(DEMO_BRANDS),
-                'LINE OF BUSINESS': '',
+                'ID': 'ROW_' + counter++,
+                'FORM TYPE': pick(PLDT_FORM_TYPES),
+                'BRAND': pick(PLDT_BRANDS),
+                'LINE OF BUSINESS': 'Customer Service Tech Support',
                 'AGENT/OFFICER NAME': agent.name,
                 'AGENT TENURE': agent.tenure,
-                'TEAM LEADER': pick(DEMO_TEAM_LEADERS),
-                'CLUSTER': pick(DEMO_CLUSTERS),
+                'TEAM LEADER': pick(PLDT_TLS),
+                'CLUSTER': pick(PLDT_CLUSTERS),
                 'WEEKENDING': weekending,
                 'MONTH': month,
                 'MISTREAT': '100%',
-                'RELIABLE': jitter(),
-                'PERSONABLE': jitter(),
-                'FAST': jitter(),
-                'SAFE & SECURE': jitter(),
-                'OVERALL SCORE': overall,
-                'EE number/ID number': String(52500000 + idCounter),
-                'OVERALL PASSRATE': overall >= 85 ? 'PASSED' : 'FAILED',
-                'CM': overall >= 90 ? 'SUPERSTAR' : 'UNDERPERFORMER',
+                'RELIABLE': deviation(),
+                'PERSONABLE': deviation(),
+                'FAST': deviation(),
+                'SAFE & SECURE': deviation(),
+                'OVERALL SCORE': overallScore,
+                'EE number/ID number': String(9004100 + counter),
+                'OVERALL PASSRATE': overallScore >= 85 ? 'PASSED' : 'FAILED',
+                'CM': overallScore >= 90 ? 'SUPERSTAR' : 'UNDERPERFORMER',
                 'RELIABLE: ADDITIONAL COMMENTS': '',
                 'PERSONABLE: ADDITIONAL COMMENTS': '',
-                'FAST: ADDITIONAL COMMENTS': '',
-                'IS THIS A POTENTIAL CUSTOMER MISTREAT?': 'No'
+                'FAST: ADDITIONAL COMMENTS': ''
             };
 
             HIT_PARAMS.forEach(p => {
-                if (p.col === 'IS THIS A POTENTIAL CUSTOMER MISTREAT?') return;
-                row[p.col] = p.type === 'boolean' ? 'Yes' : 'No Opportunity';
+                row[p.col] = p.type === 'boolean' ? (p.hitValue === 'NO' ? 'YES' : 'NO') : 'NO OPPORTUNITY';
             });
 
-            if (overall < 85) {
-                const flagCount = overall < 70 ? randInt(2, 4) : randInt(1, 2);
-                const flaggable = HIT_PARAMS.filter(p => p.col !== 'IS THIS A POTENTIAL CUSTOMER MISTREAT?');
-                const chosen = [...flaggable].sort(() => Math.random() - 0.5).slice(0, flagCount);
-                chosen.forEach(p => {
-                    row[p.col] = p.type === 'boolean' ? 'No' : pick(DEMO_REMARKS);
+            if (overallScore < 85) {
+                const targets = HIT_PARAMS.sort(() => Math.random() - 0.5).slice(0, randInt(1, 3));
+                targets.forEach(p => {
+                    row[p.col] = p.type === 'boolean' ? p.hitValue : pick(PLDT_MOCK_COMMENTS);
                 });
-                const commentField = pick(['RELIABLE: ADDITIONAL COMMENTS', 'PERSONABLE: ADDITIONAL COMMENTS', 'FAST: ADDITIONAL COMMENTS']);
-                row[commentField] = pick(DEMO_REMARKS) + ' ' + pick(DEMO_REMARKS);
+                row['RELIABLE: ADDITIONAL COMMENTS'] = pick(PLDT_MOCK_COMMENTS);
             }
 
-            idCounter++;
             rows.push(row);
         });
     });
-
     return rows;
 }
 
-function populateDemoAgentPicker() {
-    const sel = document.getElementById('demoAgentPicker');
-    sel.innerHTML = DEMO_AGENTS.map(a => `<option value="${escapeHtml(a.name)}">${escapeHtml(a.name)}</option>`).join('');
+function regenerateMemoryDataset() {
+    cachedAuditRows = generateMockDataset();
+    filterData();
 }
 
 /* ==========================================================================
-   DEMO ENTRY / NAVIGATION
+   NAVIGATION AND ENVIRONMENT LAYOUT CONTROL
    ========================================================================== */
 function enterDemo(role) {
     if (role === 'supervisor') {
@@ -199,22 +157,14 @@ function enterDemo(role) {
         const agentName = document.getElementById('demoAgentPicker').value;
         currentSession = { role: 'agent', agentName };
     }
-    enterApp();
-}
-
-function logout() {
-    currentSession = null;
-    document.getElementById('appScreen').style.display = 'none';
-    document.getElementById('authScreen').style.display = 'flex';
-    document.getElementById('sessionChip').style.display = 'none';
-}
-
-function enterApp() {
+    
     document.getElementById('authScreen').style.display = 'none';
     document.getElementById('appScreen').style.display = 'flex';
     document.getElementById('sessionChip').style.display = 'flex';
-    document.getElementById('sessionLabel').textContent =
-        (currentSession.role === 'supervisor' ? '\ud83d\udc64 Supervisor (Demo)' : '\ud83d\udc64 Agent (Demo) \u00b7 ' + currentSession.agentName);
+    
+    document.getElementById('sessionLabel').textContent = currentSession.role === 'supervisor' 
+        ? '👤 Corporate Supervisor' 
+        : `👤 Agent Account: ${currentSession.agentName}`;
 
     const isSupervisor = currentSession.role === 'supervisor';
     document.getElementById('supervisorSidebar').style.display = isSupervisor ? 'flex' : 'none';
@@ -229,8 +179,15 @@ function enterApp() {
     }
 }
 
+function logout() {
+    currentSession = null;
+    document.getElementById('appScreen').style.display = 'none';
+    document.getElementById('authScreen').style.display = 'flex';
+    document.getElementById('sessionChip').style.display = 'none';
+}
+
 function populateDropdownOptions(rows) {
-    const map = {
+    const selectorMapping = {
         selectFormType: 'FORM TYPE',
         selectBrand: 'BRAND',
         selectMonth: 'MONTH',
@@ -238,16 +195,14 @@ function populateDropdownOptions(rows) {
         selectTenure: 'AGENT TENURE',
         selectTeamLeader: 'TEAM LEADER'
     };
-    Object.entries(map).forEach(([selId, field]) => {
-        const sel = document.getElementById(selId);
-        const current = sel.value;
-        const uniques = [...new Set(rows.map(r => r[field]).filter(Boolean))].sort();
-        sel.innerHTML = `<option value="ALL">(All)</option>` + uniques.map(v => `<option value="${v}">${v}</option>`).join('');
-        if (uniques.includes(current)) sel.value = current;
+    Object.entries(selectorMapping).forEach(([elementId, dataField]) => {
+        const element = document.getElementById(elementId);
+        const previousSelection = element.value;
+        const distinctValues = [...new Set(rows.map(r => r[dataField]).filter(Boolean))].sort();
+        element.innerHTML = `<option value="ALL">(All Options)</option>` + distinctValues.map(v => `<option value="${v}">${v}</option>`).join('');
+        if (distinctValues.includes(previousSelection)) element.value = previousSelection;
     });
 }
-
-/* cachedAuditRows is declared once at the top of the file. */
 
 function resetFilters() {
     ['selectFormType', 'selectBrand', 'selectMonth', 'selectWeekending', 'selectTenure', 'selectTeamLeader']
@@ -256,10 +211,7 @@ function resetFilters() {
 }
 
 function filterData() {
-    const rows = cachedAuditRows;
-    if (!rows.length) return;
-
-    const f = {
+    const conditions = {
         formType: document.getElementById('selectFormType').value,
         brand: document.getElementById('selectBrand').value,
         month: document.getElementById('selectMonth').value,
@@ -268,145 +220,136 @@ function filterData() {
         teamLeader: document.getElementById('selectTeamLeader').value
     };
 
-    const filtered = rows.filter(r =>
-        (f.formType === 'ALL' || r['FORM TYPE'] === f.formType) &&
-        (f.brand === 'ALL' || r['BRAND'] === f.brand) &&
-        (f.month === 'ALL' || r['MONTH'] === f.month) &&
-        (f.weekending === 'ALL' || r['WEEKENDING'] === f.weekending) &&
-        (f.tenure === 'ALL' || r['AGENT TENURE'] === f.tenure) &&
-        (f.teamLeader === 'ALL' || r['TEAM LEADER'] === f.teamLeader)
+    const filtered = cachedAuditRows.filter(r =>
+        (conditions.formType === 'ALL' || r['FORM TYPE'] === conditions.formType) &&
+        (conditions.brand === 'ALL' || r['BRAND'] === conditions.brand) &&
+        (conditions.month === 'ALL' || r['MONTH'] === conditions.month) &&
+        (conditions.weekending === 'ALL' || r['WEEKENDING'] === conditions.weekending) &&
+        (conditions.tenure === 'ALL' || r['AGENT TENURE'] === conditions.tenure) &&
+        (conditions.teamLeader === 'ALL' || r['TEAM LEADER'] === conditions.teamLeader)
     );
 
     renderSupervisorDashboard(filtered);
 }
 
 function tenureBucket(tenureStr) {
-    const t = normVal(tenureStr);
-    if (t.includes('0-30')) return 'b1';
-    if (t.includes('31-60') || t.includes('61-90') || t.includes('31-90')) return 'b2';
+    const clean = normVal(tenureStr);
+    if (clean.includes('0-30')) return 'b1';
+    if (clean.includes('31-90') || clean.includes('31-60')) return 'b2';
     return 'b3';
 }
 
+/* ==========================================================================
+   VISUAL MATRIX MATRIX CALCULATORS
+   ========================================================================== */
 function renderSupervisorDashboard(data) {
     if (!data.length) {
         document.getElementById('totalPassRateVal').textContent = '-';
         document.getElementById('totalFailRateVal').textContent = '-';
-        document.getElementById('cmSuperstarVal').textContent = '-';
-        document.getElementById('cmUnderperformerVal').textContent = '-';
-        document.getElementById('leaderChart').innerHTML = '<div class="empty-note">No matching data.</div>';
-        document.getElementById('clusterChart').innerHTML = '<div class="empty-note">No matching data.</div>';
-        document.getElementById('topHitsTable').querySelector('tbody').innerHTML = '<tr><td colspan="3" class="empty-note">No matching data.</td></tr>';
         return;
     }
 
-    const avg = (key) => {
-        const vals = data.map(r => r[key]).filter(v => v !== null && v !== undefined && !isNaN(v));
-        if (!vals.length) return null;
-        return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+    const computeAverage = (key) => {
+        const subset = data.map(r => r[key]).filter(v => v !== null && v !== undefined && !isNaN(v));
+        return subset.length ? Math.round(subset.reduce((a, b) => a + b, 0) / subset.length) : null;
     };
 
-    const avgReliable = avg('RELIABLE'), avgPersonable = avg('PERSONABLE'), avgFast = avg('FAST'),
-          avgSecure = avg('SAFE & SECURE'), avgOverall = avg('OVERALL SCORE');
-
-    const setBar = (valId, barId, val) => {
-        document.getElementById(valId).textContent = val === null ? '-' : val + '%';
-        document.getElementById(barId).style.height = (val || 0) + '%';
+    // Update Core Parameter Bar Charts
+    const updateUiBar = (valueElement, barElement, evaluatedScore) => {
+        document.getElementById(valueElement).textContent = evaluatedScore === null ? '-' : evaluatedScore + '%';
+        document.getElementById(barElement).style.height = (evaluatedScore || 0) + '%';
     };
-    setBar('valReliable', 'barReliable', avgReliable);
-    setBar('valPersonable', 'barPersonable', avgPersonable);
-    setBar('valFast', 'barFast', avgFast);
-    setBar('valSecure', 'barSecure', avgSecure);
-    setBar('valOverall', 'barOverall', avgOverall);
+    updateUiBar('valReliable', 'barReliable', computeAverage('RELIABLE'));
+    updateUiBar('valPersonable', 'barPersonable', computeAverage('PERSONABLE'));
+    updateUiBar('valFast', 'barFast', computeAverage('FAST'));
+    updateUiBar('valSecure', 'barSecure', computeAverage('SAFE & SECURE'));
+    updateUiBar('valOverall', 'barOverall', computeAverage('OVERALL SCORE'));
 
-    const isPassed = (r) => r['OVERALL PASSRATE'] ? r['OVERALL PASSRATE'] === 'PASSED' : (r['OVERALL SCORE'] || 0) >= 85;
-    const passed = data.filter(isPassed).length;
-    const passPct = Math.round((passed / data.length) * 100);
-    document.getElementById('totalPassRateVal').textContent = passPct + '%';
-    document.getElementById('totalFailRateVal').textContent = (100 - passPct) + '%';
+    // Pass Fail Metrics
+    const totalPassed = data.filter(r => r['OVERALL PASSRATE'] === 'PASSED').length;
+    const computedPassRate = Math.round((totalPassed / data.length) * 100);
+    document.getElementById('totalPassRateVal').textContent = computedPassRate + '%';
+    document.getElementById('totalFailRateVal').textContent = (100 - computedPassRate) + '%';
 
+    // Tenure Grid Metrics
     const buckets = { b1: [], b2: [], b3: [] };
     data.forEach(r => buckets[tenureBucket(r['AGENT TENURE'])].push(r));
-    const bucketAvg = (arr) => {
-        const vals = arr.map(r => r['OVERALL SCORE']).filter(v => v !== null && v !== undefined && !isNaN(v));
-        return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) + '%' : '-';
+    
+    const resolveBucketStats = (arr) => {
+        const actualScores = arr.map(r => r['OVERALL SCORE']).filter(v => !isNaN(v) && v !== null);
+        return actualScores.length ? Math.round(actualScores.reduce((a, b) => a + b, 0) / actualScores.length) + '%' : '-';
     };
-    document.getElementById('totalAuditNhip').textContent = buckets.b1.length || '-';
-    document.getElementById('totalAudit31').textContent = buckets.b2.length || '-';
-    document.getElementById('totalAudit91').textContent = buckets.b3.length || '-';
+
+    document.getElementById('totalAuditNhip').textContent = buckets.b1.length;
+    document.getElementById('totalAudit31').textContent = buckets.b2.length;
+    document.getElementById('totalAudit91').textContent = buckets.b3.length;
     document.getElementById('totalAuditTotal').textContent = data.length;
-    document.getElementById('totalAvgNhip').textContent = bucketAvg(buckets.b1);
-    document.getElementById('totalAvg31').textContent = bucketAvg(buckets.b2);
-    document.getElementById('totalAvg91').textContent = bucketAvg(buckets.b3);
-    document.getElementById('totalAvgTotal').textContent = avgOverall === null ? '-' : avgOverall + '%';
 
-    // CM Distribution — uses the authoritative CM column from the source
-    // data (SUPERSTAR / UNDERPERFORMER) rather than a guessed threshold.
-    const cmRows = data.filter(r => r['CM']);
-    if (cmRows.length) {
-        const superstar = cmRows.filter(r => r['CM'] === 'SUPERSTAR').length;
-        document.getElementById('cmSuperstarVal').textContent = Math.round((superstar / cmRows.length) * 100) + '%';
-        document.getElementById('cmUnderperformerVal').textContent = Math.round(((cmRows.length - superstar) / cmRows.length) * 100) + '%';
-    } else {
-        document.getElementById('cmSuperstarVal').textContent = '-';
-        document.getElementById('cmUnderperformerVal').textContent = '-';
-    }
+    document.getElementById('totalAvgNhip').textContent = resolveBucketStats(buckets.b1);
+    document.getElementById('totalAvg31').textContent = resolveBucketStats(buckets.b2);
+    document.getElementById('totalAvg91').textContent = resolveBucketStats(buckets.b3);
+    document.getElementById('totalAvgTotal').textContent = computeAverage('OVERALL SCORE') + '%';
 
-    // Team leader chart
-    const tlScores = {};
+    // CM Assessment Row Calculation Elements
+    const superstars = data.filter(r => r['CM'] === 'SUPERSTAR').length;
+    document.getElementById('cmSuperstarVal').textContent = Math.round((superstars / data.length) * 100) + '%';
+    document.getElementById('cmUnderperformerVal').textContent = Math.round(((data.length - superstars) / data.length) * 100) + '%';
+
+    // Scores Per Team Leader Chart Builder
+    const leaderRecords = {};
     data.forEach(r => {
-        const tl = r['TEAM LEADER'] || 'Unassigned';
-        if (!tlScores[tl]) tlScores[tl] = { total: 0, count: 0 };
-        if (r['OVERALL SCORE'] !== null) { tlScores[tl].total += r['OVERALL SCORE']; tlScores[tl].count++; }
+        const leader = r['TEAM LEADER'] || 'Unassigned Leader';
+        if (!leaderRecords[leader]) leaderRecords[leader] = { sum: 0, cases: 0 };
+        leaderRecords[leader].sum += r['OVERALL SCORE'];
+        leaderRecords[leader].cases++;
     });
-    const leaderChart = document.getElementById('leaderChart');
-    leaderChart.innerHTML = Object.entries(tlScores).map(([tl, s]) => {
-        const a = s.count ? Math.round(s.total / s.count) : 0;
+    document.getElementById('leaderChart').innerHTML = Object.entries(leaderRecords).map(([name, dataObj]) => {
+        const scorePct = Math.round(dataObj.sum / dataObj.cases);
         return `<div class="horizontal-bar-row">
-            <div class="horizontal-label" title="${tl}">${tl}</div>
-            <div class="horizontal-bar-container"><div class="horizontal-bar-fill" style="width:${a}%;">${a}%</div></div>
+            <div class="horizontal-label">${name}</div>
+            <div class="horizontal-bar-container"><div class="horizontal-bar-fill" style="width:${scorePct}%;">${scorePct}%</div></div>
         </div>`;
-    }).join('') || '<div class="empty-note">No matching data.</div>';
+    }).join('');
 
-    // Cluster chart
-    const clusterScores = {};
+    // Scores Per Operational Cluster Chart Builder
+    const clusterRecords = {};
     data.forEach(r => {
-        const c = r['CLUSTER'] || 'Unassigned';
-        if (!clusterScores[c]) clusterScores[c] = { total: 0, count: 0 };
-        if (r['OVERALL SCORE'] !== null) { clusterScores[c].total += r['OVERALL SCORE']; clusterScores[c].count++; }
+        const cluster = r['CLUSTER'] || 'Unassigned Cluster';
+        if (!clusterRecords[cluster]) clusterRecords[cluster] = { sum: 0, cases: 0 };
+        clusterRecords[cluster].sum += r['OVERALL SCORE'];
+        clusterRecords[cluster].cases++;
     });
-    const clusterChart = document.getElementById('clusterChart');
-    clusterChart.innerHTML = Object.entries(clusterScores).map(([c, s]) => {
-        const a = s.count ? Math.round(s.total / s.count) : 0;
+    document.getElementById('clusterChart').innerHTML = Object.entries(clusterRecords).map(([name, dataObj]) => {
+        const scorePct = Math.round(dataObj.sum / dataObj.cases);
         return `<div class="horizontal-bar-row">
-            <div class="horizontal-label" title="${c}">${c}</div>
-            <div class="horizontal-bar-container"><div class="horizontal-bar-fill" style="width:${a}%; background:#C8102E;">${a}%</div></div>
+            <div class="horizontal-label">${name}</div>
+            <div class="horizontal-bar-container"><div class="horizontal-bar-fill" style="width:${scorePct}%; background:#1a1a1a;">${scorePct}%</div></div>
         </div>`;
-    }).join('') || '<div class="empty-note">No matching data.</div>';
+    }).join('');
 
-    // Top hit parameters
-    const hitCounts = {};
+    // Frequency Analysis Breakdown Counter
+    const parameterHits = {};
     data.forEach(r => {
         getRowIssues(r).forEach(issue => {
-            const key = issue.label + '||' + issue.category;
-            hitCounts[key] = (hitCounts[key] || 0) + 1;
+            const combinedKey = issue.label + '||' + issue.category;
+            parameterHits[combinedKey] = (parameterHits[combinedKey] || 0) + 1;
         });
     });
-    const sortedHits = Object.entries(hitCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
-    const tbody = document.getElementById('topHitsTable').querySelector('tbody');
-    tbody.innerHTML = sortedHits.length
-        ? sortedHits.map(([key, count]) => {
-            const [label, category] = key.split('||');
-            return `<tr><td style="text-align:left;">${label}</td><td>${category}</td><td>${count}</td></tr>`;
+    const rankedParameters = Object.entries(parameterHits).sort((x, y) => y[1] - x[1]).slice(0, 5);
+    const hitListBody = document.getElementById('topHitsTable').querySelector('tbody');
+    hitListBody.innerHTML = rankedParameters.length 
+        ? rankedParameters.map(([combinedKey, count]) => {
+            const [label, category] = combinedKey.split('||');
+            return `<tr><td>${label}</td><td><span class="tag ${category}">${category}</span></td><td><b>${count}</b> iterations</td></tr>`;
         }).join('')
-        : '<tr><td colspan="3" class="empty-note">No parameters flagged in this selection.</td></tr>';
+        : '<tr><td colspan="3" class="empty-note">No structural variances flagged inside current configuration.</td></tr>';
 }
 
 function renderAgentView() {
-    document.getElementById('agentWelcomeName').textContent = 'Welcome, ' + (currentSession.agentName || currentSession.email);
+    document.getElementById('agentWelcomeName').textContent = 'Welcome, ' + currentSession.agentName;
+    const personalRows = cachedAuditRows.filter(r => r['AGENT/OFFICER NAME'] === currentSession.agentName);
 
-    const myRows = cachedAuditRows.filter(r => r['AGENT/OFFICER NAME'] === currentSession.agentName);
-
-    if (!myRows.length) {
+    if (!personalRows.length) {
         document.getElementById('agentEmptyState').style.display = 'block';
         document.getElementById('agentContent').style.display = 'none';
         return;
@@ -415,94 +358,54 @@ function renderAgentView() {
     document.getElementById('agentEmptyState').style.display = 'none';
     document.getElementById('agentContent').style.display = 'flex';
 
-    const avg = (key) => {
-        const vals = myRows.map(r => r[key]).filter(v => v !== null && v !== undefined && !isNaN(v));
-        return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
+    const getAgentAverage = (key) => {
+        const validValues = personalRows.map(r => r[key]).filter(v => v !== null && !isNaN(v));
+        return validValues.length ? Math.round(validValues.reduce((a, b) => a + b, 0) / validValues.length) + '%' : '-';
     };
 
-    const tiles = [
-        { label: 'Reliable', val: avg('RELIABLE') },
-        { label: 'Personable', val: avg('PERSONABLE') },
-        { label: 'Fast', val: avg('FAST') },
-        { label: 'Safe & Secure', val: avg('SAFE & SECURE') },
-        { label: 'Overall Score', val: avg('OVERALL SCORE') }
+    const categories = [
+        { label: 'Reliable Component', val: getAgentAverage('RELIABLE') },
+        { label: 'Personable Attribute', val: getAgentAverage('PERSONABLE') },
+        { label: 'Fast Delivery', val: getAgentAverage('FAST') },
+        { label: 'Safe & Secure Policy', val: getAgentAverage('SAFE & SECURE') },
+        { label: 'Overall Quality Score', val: getAgentAverage('OVERALL SCORE') }
     ];
-    document.getElementById('agentScorecard').innerHTML = tiles.map(t =>
-        `<div class="score-tile"><div class="num">${t.val === null ? '-' : t.val + '%'}</div><div class="lbl">${t.label}</div></div>`
+
+    document.getElementById('agentScorecard').innerHTML = categories.map(cat =>
+        `<div class="score-tile"><div class="num">${cat.val}</div><div class="lbl">${cat.label}</div></div>`
     ).join('');
 
-    const sorted = [...myRows].sort((a, b) => String(b['WEEKENDING'] || '').localeCompare(String(a['WEEKENDING'] || '')));
+    const chronologicallyOrdered = [...personalRows].sort((m, n) => String(n['WEEKENDING']).localeCompare(String(m['WEEKENDING'])));
 
-const auditRowHtml = (r) => {
-        const issues = getRowIssues(r);
-        const score = r['OVERALL SCORE'];
-        const passed = r['OVERALL PASSRATE'] ? r['OVERALL PASSRATE'] === 'PASSED' : (score !== null && score >= 85);
-        const tagsHtml = issues.length
-            ? issues.map(i => `<span class="tag ${i.category.replace(/\s|&/g, '')}">${escapeHtml(i.label)}</span>`).join('')
-            : `<span class="no-issues-note">✓ No parameters flagged on this audit.</span>`;
-
-        const comments = ['RELIABLE: ADDITIONAL COMMENTS', 'PERSONABLE: ADDITIONAL COMMENTS', 'FAST: ADDITIONAL COMMENTS']
-            .map(f => String(r[f] || '').trim())
-            .filter(c => c && !NON_ISSUE_VALUES.has(c.toUpperCase()));
-        const commentsHtml = comments.length
-            ? `<div class="audit-comments">${comments.map(c => `<p>${escapeHtml(c)}</p>`).join('')}</div>`
-            : '';
+    document.getElementById('agentAuditList').innerHTML = chronologicallyOrdered.map(r => {
+        const localVariances = getRowIssues(r);
+        const tagsLayout = localVariances.length 
+            ? localVariances.map(v => `<span class="tag ${v.category}">${escapeHtml(v.label)}</span>`).join('')
+            : '<span class="no-issues-note">✓ Performance target fully realized on this transaction file instance.</span>';
 
         return `<div class="audit-row">
             <div class="audit-head">
-                <span>${escapeHtml(r['WEEKENDING'])} · ${escapeHtml(r['FORM TYPE'])} · ${escapeHtml(r['BRAND'])}</span>
-                <span class="score-pill ${passed ? 'pass-pill' : 'fail-pill'}">${score === null ? '-' : score + '%'}</span>
+                <span>Timeline Target: ${escapeHtml(r['WEEKENDING'])} · Segment Context: ${escapeHtml(r['BRAND'])}</span>
+                <span class="score-pill ${r['OVERALL PASSRATE'] === 'PASSED' ? 'pass-pill' : 'fail-pill'}">${r['OVERALL SCORE']}%</span>
             </div>
-            <div class="audit-meta">Team Leader: ${escapeHtml(r['TEAM LEADER']) || '—'} · Cluster: ${escapeHtml(r['CLUSTER']) || '—'} · Month: ${escapeHtml(r['MONTH']) || '—'}</div>
-            <div>${tagsHtml}</div>
-            ${commentsHtml}
+            <div class="audit-meta">Supervisor Assignment Line: ${escapeHtml(r['TEAM LEADER'])} · Org Unit: ${escapeHtml(r['CLUSTER'])}</div>
+            <div style="margin-top: 8px;">${tagsLayout}</div>
         </div>`;
-    };
-
-    // Group by month, ordered by each group's most recent weekending —
-    // the newest month opens expanded, older months collapse under a
-    // click-to-expand header so the list doesn't turn into an endless scroll.
-    const groups = {};
-    sorted.forEach(r => {
-        const m = normVal(r['MONTH']) || 'UNSPECIFIED';
-        if (!groups[m]) groups[m] = [];
-        groups[m].push(r);
-    });
-    const orderedMonths = Object.keys(groups).sort((a, b) => {
-        const aMax = groups[a].reduce((mx, r) => String(r['WEEKENDING'] || '') > mx ? String(r['WEEKENDING'] || '') : mx, '');
-        const bMax = groups[b].reduce((mx, r) => String(r['WEEKENDING'] || '') > mx ? String(r['WEEKENDING'] || '') : mx, '');
-        return bMax.localeCompare(aMax);
-    });
-
-    document.getElementById('agentAuditList').innerHTML = orderedMonths.map((month, idx) => {
-        const rows = groups[month];
-        const monthAvg = (() => {
-            const vals = rows.map(r => r['OVERALL SCORE']).filter(v => v !== null && v !== undefined && !isNaN(v));
-            return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
-        })();
-        return `<details class="month-group" ${idx === 0 ? 'open' : ''}>
-            <summary class="month-summary">
-                <span>${month} <span class="month-count">(${rows.length} audit${rows.length === 1 ? '' : 's'})</span></span>
-                <span class="month-avg">${monthAvg === null ? '' : 'avg ' + monthAvg + '%'}</span>
-            </summary>
-            <div class="month-body">${rows.map(auditRowHtml).join('')}</div>
-        </details>`;
     }).join('');
 }
 
 /* ==========================================================================
-   EXPOSE TO WINDOW
-   Needed because this file is an ES module (module scope), but the HTML
-   still calls these via inline onclick/onchange attributes.
+   INITIALIZATION APPLICATION ENTRY HOOKS
    ========================================================================== */
-
 window.enterDemo = enterDemo;
 window.logout = logout;
 window.filterData = filterData;
 window.resetFilters = resetFilters;
+window.regenerateMemoryDataset = regenerateMemoryDataset;
 
-/* ==========================================================================
-   INIT
-   ========================================================================== */
-cachedAuditRows = generateMockData();
-populateDemoAgentPicker();
+// Self invoking initial bootstrapping sequence
+document.addEventListener('DOMContentLoaded', () => {
+    cachedAuditRows = generateMockDataset();
+    const agentSelector = document.getElementById('demoAgentPicker');
+    agentSelector.innerHTML = PLDT_AGENTS.map(a => `<option value="${a.name}">${a.name} (${a.tenure})</option>`).join('');
+});
