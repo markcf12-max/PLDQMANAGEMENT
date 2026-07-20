@@ -1,26 +1,26 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PLDT Quality Score and Cluster Management Dashboard</title>
-<link rel="stylesheet" href="styles.css">
-<script src="script.js" defer></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PLDT Quality Score Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <link rel="stylesheet" href="styles.css">
+    <script src="script.js" defer></script>
 </head>
 <body>
 
 <!-- ============ HEADER ============ -->
 <div class="header-banner">
     <div class="header-left">
-        <span class="header-logo">PLDT</span>
-        <span style="font-size: 12px; font-weight: bold; color: var(--gold); border-left: 1px solid rgba(255,255,255,0.5); padding-left: 12px;">Enterprise</span>
+        <span class="header-logo">PLDT Quality Management</span>
     </div>
     <div class="header-title">
         <h1>PLDT Quality Score and Cluster Management</h1>
-        <p>GENUINE CARE AUDIT FORM</p>
+        <p>CUSTOMER EXPERIENCE AUDIT PORTAL</p>
     </div>
     <div class="header-right">
-        <span class="brand-tag">CONDUENT</span>
+        <span class="brand-tag">CUSTOMER CARE</span>
         <span id="sessionChip" class="session-chip" style="display:none;">
             <span id="sessionLabel"></span>
             <button class="btn-logout" onclick="logout()">Log out</button>
@@ -28,36 +28,44 @@
     </div>
 </div>
 
-<!-- ============ DEMO ENTRY SCREEN ============ -->
+<!-- ============ AUTH SCREEN ============ -->
 <div class="auth-wrap" id="authScreen">
     <div class="auth-card">
-        <div class="auth-body" style="padding-top: 24px;">
-            <h2>Live Demo</h2>
-            <p class="sub">This is a walkthrough build with sample data pre-loaded — no account needed. Pick a view to explore.</p>
+        <div class="auth-tabs">
+            <div class="auth-tab active" id="tabLogin">Demo Environment Access</div>
+        </div>
 
-            <button class="btn-primary" onclick="enterDemo('supervisor')">View Supervisor Dashboard</button>
-
-            <div class="form-group" style="margin-top: 18px;">
-                <label>Or view as a specific agent</label>
-                <select id="demoAgentPicker"></select>
+        <div class="auth-body">
+            <h2>Select Dashboard Persona</h2>
+            <p class="sub">Choose a portal viewpoint configuration below to review operational performance and metrics distributions.</p>
+            
+            <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 20px;">
+                <button class="btn-primary" onclick="enterDemo('supervisor')">Log In As Supervisor / QA</button>
+                
+                <div style="text-align: center; margin: 10px 0; color: #888; font-size: 11px; font-weight: bold;">OR SELECT AN AGENT IDENTITY</div>
+                
+                <div class="form-group">
+                    <label>Agent Name Roster</label>
+                    <div class="select-wrap" style="margin-top: 4px;">
+                        <select id="demoAgentPicker"></select>
+                    </div>
+                </div>
+                <button class="btn-primary" style="background: #1a1a1a;" onclick="enterDemo('agent')">Log In As Selected Agent</button>
             </div>
-            <button class="btn-primary" style="background: #1a1a1a;" onclick="enterDemo('agent')">View Agent Dashboard</button>
 
             <div class="auth-hint">
-                All names, scores, and comments shown here are randomly generated for demonstration purposes only and don't reflect real agents or audits.
+                <strong>Standalone Workspace Configuration:</strong> Live backend servers are disconnected. Mock datasets populate dynamically inside application runtime memory variables on every instantiation cycle.
             </div>
         </div>
     </div>
 </div>
 
 <!-- ============ APP SCREEN ============ -->
-<div id="appScreen">
+<div id="appScreen" style="display:none;">
     <div class="app-body">
 
-        <!-- ===== SUPERVISOR VIEW ===== -->
+        <!-- ===== SUPERVISOR SIDEBAR SLICERS ===== -->
         <div class="sidebar" id="supervisorSidebar" style="display:none;">
-            <div class="brand-logo-panel"><h2>PLDT</h2></div>
-
             <div class="filters-panel">
                 <div class="filters-panel-head">
                     <span>🔎 Filters</span>
@@ -71,7 +79,7 @@
                     </div>
                 </div>
                 <div class="filter-field">
-                    <label>Brand</label>
+                    <label>LOB / Segment</label>
                     <div class="select-wrap">
                         <select id="selectBrand" onchange="filterData()"><option value="ALL">(All Brands)</option></select>
                     </div>
@@ -103,6 +111,7 @@
             </div>
         </div>
 
+        <!-- ===== SUPERVISOR VIEW CANVAS ===== -->
         <div class="dashboard-canvas" id="supervisorView" style="display:none;">
             <div class="tables-grid">
                 <div class="card-table">
@@ -163,51 +172,75 @@
                 </div>
             </div>
 
+            <!-- Dashboard Parameter Chart Row Elements -->
             <div class="charts-row-1">
                 <div class="chart-box">
-                    <div class="chart-title">Quality Score Per Parameter</div>
-                    <div class="bar-chart-container" id="parameterChart">
-                        <div class="bar-wrapper"><div class="bar-value" id="valReliable">-</div><div class="bar" id="barReliable" style="background:#f0c4c9;height:0%;"></div><div class="bar-label">Reliable</div></div>
-                        <div class="bar-wrapper"><div class="bar-value" id="valPersonable">-</div><div class="bar" id="barPersonable" style="background:#e6e6e6;height:0%;"></div><div class="bar-label">Personable</div></div>
-                        <div class="bar-wrapper"><div class="bar-value" id="valFast">-</div><div class="bar" id="barFast" style="background:#7a0f1e;height:0%;"></div><div class="bar-label">Fast</div></div>
-                        <div class="bar-wrapper"><div class="bar-value" id="valSecure">-</div><div class="bar" id="barSecure" style="background:#1a1a1a;height:0%;"></div><div class="bar-label">Safe &amp; Secure</div></div>
-                        <div class="bar-wrapper"><div class="bar-value" id="valOverall">-</div><div class="bar" id="barOverall" style="background:#C8102E;height:0%;"></div><div class="bar-label">Overall</div></div>
+                    <div class="chart-title">Dimensional Quality Score Attributes</div>
+                    <div class="bar-chart-container">
+                        <div class="bar-wrapper">
+                            <div class="bar-value" id="valReliable">-</div>
+                            <div class="bar" id="barReliable" style="background: #C8102E;"></div>
+                            <div class="bar-label">Reliable</div>
+                        </div>
+                        <div class="bar-wrapper">
+                            <div class="bar-value" id="valPersonable">-</div>
+                            <div class="bar" id="barPersonable" style="background: #333333;"></div>
+                            <div class="bar-label">Personable</div>
+                        </div>
+                        <div class="bar-wrapper">
+                            <div class="bar-value" id="valFast">-</div>
+                            <div class="bar" id="barFast" style="background: #6b6b6b;"></div>
+                            <div class="bar-label">Fast</div>
+                        </div>
+                        <div class="bar-wrapper">
+                            <div class="bar-value" id="valSecure">-</div>
+                            <div class="bar" id="barSecure" style="background: #B01427;"></div>
+                            <div class="bar-label">Safe & Secure</div>
+                        </div>
+                        <div class="bar-wrapper">
+                            <div class="bar-value" id="valOverall" style="color: #C8102E;">-</div>
+                            <div class="bar" id="barOverall" style="background: #9A0C22;"></div>
+                            <div class="bar-label" style="font-weight: bold;">Overall Score</div>
+                        </div>
                     </div>
                 </div>
                 <div class="chart-box">
                     <div class="chart-title">Scores Per Team Leader</div>
-                    <div class="horizontal-chart" id="leaderChart">
-                        <div class="empty-note">No data for this selection.</div>
-                    </div>
+                    <div class="horizontal-chart" id="leaderChart"></div>
                 </div>
             </div>
 
             <div class="charts-row-2">
-                <div class="chart-box" style="min-height:200px;">
-                    <div class="chart-title">Top Hit Parameters (All Agents)</div>
-                    <table class="excel-table hitlist-table" id="topHitsTable">
-                        <thead><tr><th style="width:60%;">Parameter</th><th>Category</th><th>Times Hit</th></tr></thead>
-                        <tbody><tr><td colspan="3" class="empty-note">No data for this selection.</td></tr></tbody>
-                    </table>
+                <div class="chart-box">
+                    <div class="chart-title">Scores Per Regional Operational Cluster</div>
+                    <div class="horizontal-chart" id="clusterChart"></div>
                 </div>
-                <div class="chart-box" style="min-height:200px;">
-                    <div class="chart-title">Score By Cluster</div>
-                    <div class="horizontal-chart" id="clusterChart">
-                        <div class="empty-note">No data for this selection.</div>
+                <div class="chart-box" style="justify-content: flex-start; min-height: unset;">
+                    <div class="chart-title">Data Actions</div>
+                    <div style="display: flex; flex-direction: column; gap: 8px; justify-content: center; height: 100%;">
+                        <button class="btn-primary" style="margin: 0; background-color: #6b6b6b;" onclick="regenerateMemoryDataset()">🔄 Re-roll Dynamic Mock Entries</button>
                     </div>
                 </div>
             </div>
+
+            <div class="chart-box" style="min-height:200px;">
+                <div class="chart-title">Top Hit Parameters (All Impacted Profiles)</div>
+                <table class="excel-table hitlist-table" id="topHitsTable">
+                    <thead><tr><th style="width:60%;">Parameter</th><th>Category</th><th>Times Hit</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
         </div>
 
-        <!-- ===== AGENT VIEW ===== -->
-        <div id="agentView">
+        <!-- ===== AGENT VIEW CANVAS ===== -->
+        <div id="agentView" style="display:none;">
             <div class="agent-welcome">
                 <h2 id="agentWelcomeName">Welcome</h2>
-                <p id="agentWelcomeSub">Here is your Genuine Care Audit performance summary.</p>
+                <p id="agentWelcomeSub">Here is your customized execution quality analysis performance matrix statement tracker.</p>
             </div>
 
             <div id="agentEmptyState" class="empty-agent-data" style="display:none;">
-                No audits found for this agent.
+                No audit tracking instances assigned against your identity structures.
             </div>
 
             <div id="agentContent" style="display:none; flex-direction:column; gap:16px;">
@@ -222,7 +255,7 @@
 
     </div>
 
-    <footer class="disclaimer">Live demo build · all data shown is randomly generated for demonstration purposes only</footer>
+    <footer class="disclaimer">PLDT Environment Simulator Build · All UI/UX interface systems processing configurations decoupled from data databases</footer>
 </div>
 
 </body>
