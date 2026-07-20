@@ -351,16 +351,6 @@ async function enterApp() {
 /* ==========================================================================
    HIT-PARAMETER CONFIG
    Maps raw audit columns to plain-language "what was flagged" descriptions.
-
-   Two column types, because the source data uses different conventions:
-   - 'descriptive' (Reliable/Personable/Fast columns): usually "No Opportunity"
-     when there's nothing to flag, but when there IS an issue the cell often
-     contains the actual reason ("No ticket created", "Vague explanation")
-     rather than a plain "Yes". Any value that isn't a known "no issue"
-     marker counts as a hit, and the real text is shown when it's more
-     specific than a bare "Yes".
-   - 'boolean' (Safe & Secure/Mistreat columns): strict Yes/No/NA convention,
-     matched against an exact hitValue.
    ========================================================================== */
 const NON_ISSUE_VALUES = new Set(['', 'NO OPPORTUNITY', 'NA', 'N/A', 'NO', 'NONE']);
 
@@ -395,10 +385,7 @@ function normVal(v) {
     return (v === undefined || v === null) ? '' : String(v).trim().toUpperCase();
 }
 
-/* Forgiving name comparison for matching roster entries to raw-data rows.
-   Strips accents/diacritics (Muñoz -> Munoz), punctuation, common suffixes
-   (Jr., Sr., II, III), and collapses extra whitespace — so small spelling
-   differences between the two files don't break the match. */
+/* Forgiving name comparison for matching roster entries to raw-data rows. */
 function normalizeName(str) {
     return String(str || '')
         .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -421,9 +408,6 @@ function getRowIssues(row) {
             return;
         }
 
-        // descriptive: anything that isn't a known "no issue" marker is a hit.
-        // If the cell has real text beyond a bare "Yes", show that instead of
-        // the generic label — it's the actual reason the auditor wrote down.
         if (!NON_ISSUE_VALUES.has(v)) {
             const detail = v !== 'YES' ? String(raw).trim() : '';
             issues.push({ label: detail ? `${p.label} — ${detail}` : p.label, category: p.category });
@@ -435,7 +419,7 @@ function getRowIssues(row) {
 /* ==========================================================================
    FILE PARSING (SheetJS handles both CSV and XLSX)
    ========================================================================== */
-function parseWorkbookFile(file, preferSheetNameContains) {
+function parseWorkbookFile(file, preferSheetKeywords = []) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = (e) => {
@@ -443,10 +427,15 @@ function parseWorkbookFile(file, preferSheetNameContains) {
                 const data = new Uint8Array(e.target.result);
                 const wb = XLSX.read(data, { type: 'array' });
                 let sheetName = wb.SheetNames[0];
-                if (preferSheetNameContains) {
-                    const found = wb.SheetNames.find(n => n.toUpperCase().includes(preferSheetNameContains));
+
+                if (preferSheetKeywords && preferSheetKeywords.length > 0) {
+                    const keywords = Array.isArray(preferSheetKeywords) ? preferSheetKeywords : [preferSheetKeywords];
+                    const found = wb.SheetNames.find(n => 
+                        keywords.some(kw => n.toUpperCase().includes(kw.toUpperCase()))
+                    );
                     if (found) sheetName = found;
                 }
+
                 const ws = wb.Sheets[sheetName];
                 const json = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
                 resolve(json);
@@ -460,14 +449,17 @@ function parseWorkbookFile(file, preferSheetNameContains) {
 }
 
 function findHeader(row, candidates) {
+    if (!row) return null;
     const keys = Object.keys(row);
+    
+    // Strict exact match
     for (const cand of candidates) {
-        const hit = keys.find(k => k.trim().toLowerCase() === cand.toLowerCase());
+        const hit = keys.find(k => k.trim().toLowerCase() === cand.trim().toLowerCase());
         if (hit) return hit;
     }
-    // fallback: partial match
+    // Partial substring match
     for (const cand of candidates) {
-        const hit = keys.find(k => k.trim().toLowerCase().includes(cand.toLowerCase()));
+        const hit = keys.find(k => k.trim().toLowerCase().includes(cand.trim().toLowerCase()));
         if (hit) return hit;
     }
     return null;
@@ -482,16 +474,24 @@ async function handleRosterUpload(event) {
     document.getElementById('rosterStatus').textContent = 'Processing ' + file.name + '...';
 
     try {
-        const rows = await parseWorkbookFile(file);
+        // Look for sheets named 'ROSTER', 'DOMAIN', 'MASTER', or default to sheet 1
+        const rows = await parseWorkbookFile(file, ['ROSTER', 'DOMAIN', 'MASTER']);
         if (!rows.length) throw new Error('empty');
 
-        const emailKey = findHeader(rows[0], ['PLDT/SMART Domain v2', 'PLDT/SMART Domain', 'Email', 'Work Email', 'Conduent Email Address', 'Email Address']);
-        const nameKey = findHeader(rows[0], ['Agent Name', 'AGENT/OFFICER NAME', 'Name', 'Employee Name', 'Full Name']);
-        const idKey = findHeader(rows[0], ['ID', 'Employee ID', 'EE number/ID number', 'Agent ID', 'Win ID', 'WIN ID', 'Badge Number']);
+        const emailKey = findHeader(rows[0], [
+            'PLDT/SMART Domain v2', 'PLDT/SMART Domain', 'Domain', 'Email', 
+            'Work Email', 'Conduent Email Address', 'Email Address', 'PLDT Domain'
+        ]);
+        const nameKey = findHeader(rows[0], [
+            'Employee Name', 'Agent Name', 'AGENT/OFFICER NAME', 'Name', 'Full Name'
+        ]);
+        const idKey = findHeader(rows[0], [
+            'Win ID', 'WIN ID', 'Win id', 'ID', 'Employee ID', 'EE number/ID number', 'Agent ID', 'Badge Number'
+        ]);
 
         if (!emailKey || !nameKey) {
             console.warn('Roster column detection failed. Email column found:', emailKey, '| Name column found:', nameKey);
-            console.log('Actual column headers in this file:', JSON.stringify(Object.keys(rows[0])));
+            console.log('Actual column headers in parsed sheet:', JSON.stringify(Object.keys(rows[0])));
             throw new Error('missing columns');
         }
 
@@ -510,7 +510,7 @@ async function handleRosterUpload(event) {
     } catch (err) {
         console.error(err);
         document.getElementById('rosterStatus').innerHTML =
-            `⚠️ Could not read roster — check the browser console (F12) for exactly which columns weren't found.`;
+            `⚠️ Could not read roster — check browser console (F12) for details.`;
     }
 }
 
@@ -521,10 +521,6 @@ async function refreshRosterStatus() {
     }
 }
 
-/* Re-match every existing auditData row to the current roster, without
-   requiring a fresh raw-data upload. Fixes the common case where the
-   roster was uploaded after the raw data, or an agent's name didn't
-   match exactly at the time of upload. */
 async function resyncAgentEmails() {
     const statusEl = document.getElementById('resyncStatus');
     statusEl.textContent = 'Re-syncing...';
@@ -560,7 +556,7 @@ async function resyncAgentEmails() {
         if (unmatchedNames.size) {
             const list = [...unmatchedNames];
             msg += ` First few: ${list.slice(0, 6).join(' | ')}${list.length > 6 ? ' …' : ''} — full list logged to console.`;
-            console.warn('Unmatched agent names (not found on the roster, or spelled differently there):', list);
+            console.warn('Unmatched agent names (not found on roster):', list);
         }
         statusEl.textContent = msg;
     } catch (err) {
@@ -586,7 +582,7 @@ async function handleDataUpload(event) {
     document.getElementById('dataStatus').textContent = 'Processing ' + file.name + '...';
 
     try {
-        const rows = await parseWorkbookFile(file, 'RAW');
+        const rows = await parseWorkbookFile(file, ['RAW', 'DATA']);
         if (!rows.length) throw new Error('empty');
 
         const headerMap = {};
@@ -598,11 +594,9 @@ async function handleDataUpload(event) {
         const missingFields = NEEDED_FIELDS.filter(f => !headerMap[f]);
         if (missingFields.length) {
             console.warn('Columns not found in uploaded file:', missingFields);
-            console.log('Actual column headers in this file:', JSON.stringify(Object.keys(rows[0])));
+            console.log('Actual column headers in uploaded file:', JSON.stringify(Object.keys(rows[0])));
         }
 
-        // build a name -> email lookup from the roster so each audit row can be
-        // matched back to the agent's login email (needed for the agent's own query)
         const rosterSnap = await getDocs(collection(db, 'roster'));
         const nameToEmail = {};
         rosterSnap.forEach(d => {
@@ -610,12 +604,6 @@ async function handleDataUpload(event) {
             nameToEmail[normalizeName(data.agentName)] = d.id;
         });
 
-        // Trim + normalize casing on the "dimension" columns so a stray space
-        // or inconsistent casing in the source file (e.g. "July" vs "JULY")
-        // doesn't split what's really one value into duplicate filter/group
-        // entries. FORM TYPE/MONTH/AGENT TENURE are small controlled
-        // vocabularies so they're safe to uppercase; names/brands are just
-        // trimmed so their display casing isn't changed.
         const UPPERCASE_FIELDS = ['FORM TYPE', 'MONTH', 'AGENT TENURE', 'OVERALL PASSRATE', 'CM'];
         const TRIM_ONLY_FIELDS = ['BRAND', 'LINE OF BUSINESS', 'TEAM LEADER', 'CLUSTER', 'WEEKENDING'];
 
@@ -627,7 +615,7 @@ async function handleDataUpload(event) {
             });
             UPPERCASE_FIELDS.forEach(f => { out[f] = normVal(out[f]); });
             TRIM_ONLY_FIELDS.forEach(f => { out[f] = String(out[f] || '').trim(); });
-            // normalize scores to 0-100 numbers (source is a 0-1 fraction)
+
             ['RELIABLE', 'PERSONABLE', 'FAST', 'SAFE & SECURE', 'OVERALL SCORE'].forEach(k => {
                 const n = parseFloat(out[k]);
                 out[k] = isNaN(n) ? null : (n <= 1 ? n * 100 : n);
@@ -636,12 +624,6 @@ async function handleDataUpload(event) {
             return out;
         }).filter(r => r['AGENT/OFFICER NAME']);
 
-        // Collapse exact duplicate rows (same audit exported more than once).
-        // Prefer the file's own unique ID column — Call ID/Case Number can
-        // legitimately repeat (a case can get multiple audits), so it's not
-        // a safe dedup key, but the leading "ID" column is one row per
-        // submission. Fall back to comparing every tracked field only if
-        // that column isn't present in this file.
         const hasIdColumn = !!headerMap['ID'];
         const seenKeys = new Set();
         const deduped = [];
@@ -655,17 +637,17 @@ async function handleDataUpload(event) {
 
         await replaceAuditData(deduped);
 
-        cachedAuditRows = deduped; // avoid an extra Firestore read — we already have the fresh data locally
+        cachedAuditRows = deduped;
         let msg = `✅ ${deduped.length} audit rows loaded${dupCount ? ` (${dupCount} exact duplicate row${dupCount === 1 ? '' : 's'} removed)` : ''}.`;
         if (missingFields.length) {
-            msg += ` ⚠️ ${missingFields.length} expected column(s) weren't found in this file (so those parameters won't show as flagged) — check the browser console for the exact list.`;
+            msg += ` ⚠️ ${missingFields.length} expected column(s) missing — check console for details.`;
         }
         document.getElementById('dataStatus').innerHTML = msg;
         populateDropdownOptions(trimmed);
         filterData();
     } catch (err) {
         console.error(err);
-        document.getElementById('dataStatus').innerHTML = `⚠️ Could not read this file. Check that it contains the expected audit columns.`;
+        document.getElementById('dataStatus').innerHTML = `⚠️ Could not read file. Check expected audit columns.`;
     }
 }
 
@@ -690,10 +672,6 @@ function populateDropdownOptions(rows) {
     });
 }
 
-/* In-memory cache of the supervisor's audit data. Refetched only on login
-   and after an upload/resync — filtering (dropdowns) works off this copy
-   instead of re-reading the whole Firestore collection every time, which
-   is what was burning through the free-tier daily read quota. */
 let cachedAuditRows = [];
 
 async function loadAllAuditData() {
@@ -766,9 +744,6 @@ function renderSupervisorDashboard(data) {
 
     const avgOverall = avg('OVERALL SCORE');
 
-    // Score per LOB — one bar per Line of Business (the BRAND field), showing
-    // that LOB's average overall score. Dynamic because the number of LOBs
-    // in the data can vary.
     const lobScores = {};
     data.forEach(r => {
         const lob = r['BRAND'] || 'Unspecified';
@@ -778,6 +753,7 @@ function renderSupervisorDashboard(data) {
             lobScores[lob].count++;
         }
     });
+
     const lobColors = ['#C8102E', '#7a0f1e', '#1a1a1a', '#6b6b6b', '#f0c4c9'];
     const parameterChart = document.getElementById('parameterChart');
     const lobNames = Object.keys(lobScores).sort();
@@ -814,8 +790,6 @@ function renderSupervisorDashboard(data) {
     document.getElementById('totalAvg91').textContent = bucketAvg(buckets.b3);
     document.getElementById('totalAvgTotal').textContent = avgOverall === null ? '-' : avgOverall + '%';
 
-    // CM Distribution — uses the authoritative CM column from the source
-    // data (SUPERSTAR / UNDERPERFORMER) rather than a guessed threshold.
     const cmRows = data.filter(r => r['CM']);
     if (cmRows.length) {
         const superstar = cmRows.filter(r => r['CM'] === 'SUPERSTAR').length;
@@ -826,7 +800,6 @@ function renderSupervisorDashboard(data) {
         document.getElementById('cmUnderperformerVal').textContent = '-';
     }
 
-    // Team leader chart
     const tlScores = {};
     data.forEach(r => {
         const tl = r['TEAM LEADER'] || 'Unassigned';
@@ -842,7 +815,6 @@ function renderSupervisorDashboard(data) {
         </div>`;
     }).join('') || '<div class="empty-note">No matching data.</div>';
 
-    // Top hit parameters
     const hitCounts = {};
     data.forEach(r => {
         getRowIssues(r).forEach(issue => {
@@ -859,9 +831,6 @@ function renderSupervisorDashboard(data) {
         }).join('')
         : '<tr><td colspan="3" class="empty-note">No parameters flagged in this selection.</td></tr>';
 
-    // Cluster Score Distribution — % of each cluster's audits falling into
-    // each score range, so a supervisor can see e.g. "Cluster D has 30% of
-    // its audits below 60%" at a glance rather than just an average.
     const distBuckets = [
         { label: '90–100%', test: s => s >= 90 },
         { label: '80–89%', test: s => s >= 80 && s < 90 },
@@ -876,7 +845,7 @@ function renderSupervisorDashboard(data) {
         if (!clusterRows[c]) clusterRows[c] = [];
         clusterRows[c].push(r['OVERALL SCORE']);
     });
-    console.log('Cluster Score Distribution — raw OVERALL SCORE values per cluster:', JSON.stringify(clusterRows));
+
     const clusterDistBody = document.getElementById('clusterDistTable').querySelector('tbody');
     const clusterNames = Object.keys(clusterRows).sort();
     clusterDistBody.innerHTML = clusterNames.length
@@ -899,7 +868,6 @@ function renderSupervisorDashboard(data) {
 async function renderAgentView() {
     document.getElementById('agentWelcomeName').textContent = 'Welcome, ' + (currentSession.agentName || currentSession.email);
 
-    // Firestore security rules restrict this query to the signed-in agent's own rows
     const q = query(collection(db, 'auditData'), where('agentEmailLower', '==', currentSession.email));
     const snap = await getDocs(q);
     const myRows = snap.docs.map(d => d.data());
@@ -931,7 +899,7 @@ async function renderAgentView() {
 
     const sorted = [...myRows].sort((a, b) => String(b['WEEKENDING'] || '').localeCompare(String(a['WEEKENDING'] || '')));
 
-const auditRowHtml = (r) => {
+    const auditRowHtml = (r) => {
         const issues = getRowIssues(r);
         const score = r['OVERALL SCORE'];
         const passed = r['OVERALL PASSRATE'] ? r['OVERALL PASSRATE'] === 'PASSED' : (score !== null && score >= 85);
@@ -957,17 +925,13 @@ const auditRowHtml = (r) => {
         </div>`;
     };
 
-    // Group by month, ordered by each group's most recent weekending —
-    // the newest month opens expanded, older months collapse under a
-    // click-to-expand header so the list doesn't turn into an endless scroll.
     const groups = {};
     sorted.forEach(r => {
         const m = normVal(r['MONTH']) || 'UNSPECIFIED';
         if (!groups[m]) groups[m] = [];
         groups[m].push(r);
     });
-    console.log('Month groups for this agent — if you see more keys than expected, check the raw MONTH values listed below each:',
-        Object.keys(groups), sorted.map(r => JSON.stringify(r['MONTH'])));
+
     const orderedMonths = Object.keys(groups).sort((a, b) => {
         const aMax = groups[a].reduce((mx, r) => String(r['WEEKENDING'] || '') > mx ? String(r['WEEKENDING'] || '') : mx, '');
         const bMax = groups[b].reduce((mx, r) => String(r['WEEKENDING'] || '') > mx ? String(r['WEEKENDING'] || '') : mx, '');
@@ -992,8 +956,6 @@ const auditRowHtml = (r) => {
 
 /* ==========================================================================
    EXPOSE TO WINDOW
-   Needed because this file is an ES module (module scope), but the HTML
-   still calls these via inline onclick/onchange attributes.
    ========================================================================== */
 window.switchAuthTab = switchAuthTab;
 window.setSignupRole = setSignupRole;
