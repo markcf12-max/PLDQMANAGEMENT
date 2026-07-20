@@ -485,11 +485,15 @@ async function handleRosterUpload(event) {
         const rows = await parseWorkbookFile(file);
         if (!rows.length) throw new Error('empty');
 
-        const emailKey = findHeader(rows[0], ['Email', 'Work Email']);
-        const nameKey = findHeader(rows[0], ['Agent Name', 'AGENT/OFFICER NAME', 'Name']);
-        const idKey = findHeader(rows[0], ['ID', 'Employee ID', 'EE number/ID number', 'Agent ID']);
+        const emailKey = findHeader(rows[0], ['Email', 'Work Email', 'Conduent Email Address', 'Email Address']);
+        const nameKey = findHeader(rows[0], ['Agent Name', 'AGENT/OFFICER NAME', 'Name', 'Employee Name', 'Full Name']);
+        const idKey = findHeader(rows[0], ['ID', 'Employee ID', 'EE number/ID number', 'Agent ID', 'Win ID', 'WIN ID', 'Badge Number']);
 
-        if (!emailKey || !nameKey) throw new Error('missing columns');
+        if (!emailKey || !nameKey) {
+            console.warn('Roster column detection failed. Email column found:', emailKey, '| Name column found:', nameKey);
+            console.log('Actual column headers in this file:', Object.keys(rows[0]));
+            throw new Error('missing columns');
+        }
 
         const roster = rows
             .map(r => ({
@@ -506,7 +510,7 @@ async function handleRosterUpload(event) {
     } catch (err) {
         console.error(err);
         document.getElementById('rosterStatus').innerHTML =
-            `⚠️ Could not read roster. Expect columns: Email, Agent Name, ID.`;
+            `⚠️ Could not read roster — check the browser console (F12) for exactly which columns weren't found.`;
     }
 }
 
