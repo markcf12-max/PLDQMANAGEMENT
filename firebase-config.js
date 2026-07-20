@@ -1,3 +1,4 @@
+// Firebase project configuration — PLDT
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
@@ -11,9 +12,7 @@ const firebaseConfig = {
   appId: "1:935852786747:web:08fd0e98362aceb805081e"
 };
 
-// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Export instances to be consumed by script.js
 export const auth = getAuth(app);
 export const db = getFirestore(app);
