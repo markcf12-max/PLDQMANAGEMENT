@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PLDT Quality Score and Cluster Management Dashboard</title>
+<link rel="stylesheet" href="styles.css">
+<script src="script.js"></script>
+</head>
+<body>
+
+<!-- ============ HEADER ============ -->
+<div class="header-banner">
+    <div class="header-left">
+        <span class="header-logo">PLDT</span>
+        <span style="font-size: 12px; font-weight: bold; color: var(--gold); border-left: 1px solid var(--pldt-blue-light); padding-left: 12px;">Enterprise</span>
+    </div>
+    <div class="header-title">
+        <h1>PLDT Quality Score and Cluster Management</h1>
+        <p>GENUINE CARE AUDIT FORM</p>
+    </div>
+    <div class="header-right">
+        <span class="brand-tag">CONDUENT</span>
+        <span id="sessionChip" class="session-chip" style="display:none;">
+            <span id="sessionLabel"></span>
+            <button class="btn-logout" onclick="logout()">Log out</button>
+        </span>
+    </div>
+</div>
+
+<!-- ============ DEMO ENTRY SCREEN ============ -->
+<div class="auth-wrap" id="authScreen">
+    <div class="auth-card">
+        <div class="auth-body" style="padding-top: 24px;">
+            <h2>Live Demo</h2>
+            <p class="sub">This is a walkthrough build with sample data pre-loaded — no account needed. Pick a view to explore.</p>
+
+            <button class="btn-primary" onclick="enterDemo('supervisor')">View Supervisor Dashboard</button>
+
+            <div class="form-group" style="margin-top: 18px;">
+                <label>Or view as a specific agent</label>
+                <select id="demoAgentPicker"></select>
+            </div>
+            <button class="btn-primary" style="background: var(--pldt-blue);" onclick="enterDemo('agent')">View Agent Dashboard</button>
+
+            <div class="auth-hint">
+                All names, scores, and comments shown here are randomly generated for demonstration purposes only and don't reflect real agents or audits.
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ============ APP SCREEN ============ -->
+<div id="appScreen">
+    <div class="app-body">
+
+        <!-- ===== SUPERVISOR VIEW ===== -->
+        <div class="sidebar" id="supervisorSidebar" style="display:none;">
+            <div class="brand-logo-panel"><h2>PLDT</h2></div>
+
+            <div class="filters-panel">
+                <div class="filters-panel-head">
+                    <span>🔎 Filters</span>
+                    <button type="button" class="filters-reset" onclick="resetFilters()">Reset</button>
+                </div>
+
+                <div class="filter-field">
+                    <label>Form Type</label>
+                    <div class="select-wrap">
+                        <select id="selectFormType" onchange="filterData()"><option value="ALL">(All Form Types)</option></select>
+                    </div>
+                </div>
+                <div class="filter-field">
+                    <label>Brand</label>
+                    <div class="select-wrap">
+                        <select id="selectBrand" onchange="filterData()"><option value="ALL">(All Brands)</option></select>
+                    </div>
+                </div>
+                <div class="filter-field">
+                    <label>Month</label>
+                    <div class="select-wrap">
+                        <select id="selectMonth" onchange="filterData()"><option value="ALL">(All Months)</option></select>
+                    </div>
+                </div>
+                <div class="filter-field">
+                    <label>Weekending</label>
+                    <div class="select-wrap">
+                        <select id="selectWeekending" onchange="filterData()"><option value="ALL">(All Weekending)</option></select>
+                    </div>
+                </div>
+                <div class="filter-field">
+                    <label>Agent Tenure</label>
+                    <div class="select-wrap">
+                        <select id="selectTenure" onchange="filterData()"><option value="ALL">(All Tenures)</option></select>
+                    </div>
+                </div>
+                <div class="filter-field">
+                    <label>Team Leader</label>
+                    <div class="select-wrap">
+                        <select id="selectTeamLeader" onchange="filterData()"><option value="ALL">(All Team Leaders)</option></select>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="dashboard-canvas" id="supervisorView" style="display:none;">
+            <div class="tables-grid">
+                <div class="card-table">
+                    <h3>Pass Rate %</h3>
+                    <table class="excel-table">
+                        <thead><tr><th>Row Labels</th><th>PASSED</th><th>FAILED</th><th>Total</th></tr></thead>
+                        <tbody>
+                            <tr class="total-row">
+                                <td>Grand Total</td>
+                                <td id="totalPassRateVal">-</td>
+                                <td id="totalFailRateVal">-</td>
+                                <td>100%</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="card-table">
+                    <h3>Number of Audits (by Tenure)</h3>
+                    <table class="excel-table">
+                        <thead><tr><th>Row Labels</th><th>0-30</th><th>31-90</th><th>&gt;91 Days</th><th>Total</th></tr></thead>
+                        <tbody>
+                            <tr class="total-row">
+                                <td>Grand Total</td>
+                                <td id="totalAuditNhip">-</td>
+                                <td id="totalAudit31">-</td>
+                                <td id="totalAudit91">-</td>
+                                <td id="totalAuditTotal">-</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="card-table">
+                    <h3>Average QA Scores (by Tenure)</h3>
+                    <table class="excel-table">
+                        <thead><tr><th>Row Labels</th><th>0-30</th><th>31-90</th><th>&gt;91 Days</th><th>Total</th></tr></thead>
+                        <tbody>
+                            <tr class="total-row">
+                                <td>Grand Total</td>
+                                <td id="totalAvgNhip">-</td>
+                                <td id="totalAvg31">-</td>
+                                <td id="totalAvg91">-</td>
+                                <td id="totalAvgTotal">-</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="card-table">
+                    <h3>CM Distribution</h3>
+                    <table class="excel-table">
+                        <thead><tr><th>Superstar</th><th>Underperformer</th></tr></thead>
+                        <tbody>
+                            <tr class="total-row">
+                                <td id="cmSuperstarVal">-</td>
+                                <td id="cmUnderperformerVal">-</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="charts-row-1">
+                <div class="chart-box">
+                    <div class="chart-title">Quality Score Per Parameter</div>
+                    <div class="bar-chart-container" id="parameterChart">
+                        <div class="bar-wrapper"><div class="bar-value" id="valReliable">-</div><div class="bar" id="barReliable" style="background:#f0c4c9;height:0%;"></div><div class="bar-label">Reliable</div></div>
+                        <div class="bar-wrapper"><div class="bar-value" id="valPersonable">-</div><div class="bar" id="barPersonable" style="background:#c9d9ef;height:0%;"></div><div class="bar-label">Personable</div></div>
+                        <div class="bar-wrapper"><div class="bar-value" id="valFast">-</div><div class="bar" id="barFast" style="background:#002f6c;height:0%;"></div><div class="bar-label">Fast</div></div>
+                        <div class="bar-wrapper"><div class="bar-value" id="valSecure">-</div><div class="bar" id="barSecure" style="background:#0057b8;height:0%;"></div><div class="bar-label">Safe &amp; Secure</div></div>
+                        <div class="bar-wrapper"><div class="bar-value" id="valOverall">-</div><div class="bar" id="barOverall" style="background:#C8102E;height:0%;"></div><div class="bar-label">Overall</div></div>
+                    </div>
+                </div>
+                <div class="chart-box">
+                    <div class="chart-title">Scores Per Team Leader</div>
+                    <div class="horizontal-chart" id="leaderChart">
+                        <div class="empty-note">No data for this selection.</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="charts-row-2">
+                <div class="chart-box" style="min-height:200px;">
+                    <div class="chart-title">Top Hit Parameters (All Agents)</div>
+                    <table class="excel-table hitlist-table" id="topHitsTable">
+                        <thead><tr><th style="width:60%;">Parameter</th><th>Category</th><th>Times Hit</th></tr></thead>
+                        <tbody><tr><td colspan="3" class="empty-note">No data for this selection.</td></tr></tbody>
+                    </table>
+                </div>
+                <div class="chart-box" style="min-height:200px;">
+                    <div class="chart-title">Score By Cluster</div>
+                    <div class="horizontal-chart" id="clusterChart">
+                        <div class="empty-note">No data for this selection.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== AGENT VIEW ===== -->
+        <div id="agentView">
+            <div class="agent-welcome">
+                <h2 id="agentWelcomeName">Welcome</h2>
+                <p id="agentWelcomeSub">Here is your Genuine Care Audit performance summary.</p>
+            </div>
+
+            <div id="agentEmptyState" class="empty-agent-data" style="display:none;">
+                No audits found for this agent.
+            </div>
+
+            <div id="agentContent" style="display:none; flex-direction:column; gap:16px;">
+                <div class="scorecard-grid" id="agentScorecard"></div>
+
+                <div class="agent-section">
+                    <h3>Your Audits &amp; What Was Flagged</h3>
+                    <div id="agentAuditList"></div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <footer class="disclaimer">Live demo build · all data shown is randomly generated for demonstration purposes only</footer>
+</div>
+
+</body>
+</html>
