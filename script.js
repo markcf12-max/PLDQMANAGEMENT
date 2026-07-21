@@ -1,5 +1,5 @@
 /* ==========================================================================
-   FIREBASE IMPORTS & CONSTANTS
+   FIREBASE IMPORTS
    ========================================================================== */
 import { auth, db } from './firebase-config.js';
 import {
@@ -10,29 +10,30 @@ import {
     onAuthStateChanged
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import {
-    doc, getDoc, setDoc,
+    doc, getDoc, setDoc, deleteDoc,
     collection, query, where, getDocs, writeBatch
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 const TEAM_LEADER_INVITE_CODE = 'PLDT-TL-2026';
-const QUALITY_INVITE_CODE = 'PLDT-QA-2026';
+const QUALITY_INVITE_CODE = 'PLDT-QA-2026'; 
+
+let lobChartInstance = null;
 
 /* ==========================================================================
-   FIRESTORE BATCH HELPERS
+   FIRESTORE BATCH HELPERS (Concurrent Writes)
    ========================================================================== */
-async function batchWriteDocs(collectionName, docsArray, idFn) {
-    const CHUNK_SIZE = 400;
-    const promises = [];
-
-    for (let i = 0; i < docsArray.length; i += CHUNK_SIZE) {
-        const chunk = docsArray.slice(i, i + CHUNK_SIZE);
+async function batchWriteDocs(collectionName, docs, idFn) {
+    const chunks = [];
+    for (let i = 0; i < docs.length; i += 400) chunks.push(docs.slice(i, i + 400));
+    
+    const promises = chunks.map(chunk => {
         const batch = writeBatch(db);
         chunk.forEach(d => {
             const ref = idFn ? doc(db, collectionName, idFn(d)) : doc(collection(db, collectionName));
             batch.set(ref, d);
         });
-        promises.push(batch.commit());
-    }
+        return batch.commit();
+    });
 
     await Promise.all(promises);
 }
@@ -40,11 +41,10 @@ async function batchWriteDocs(collectionName, docsArray, idFn) {
 async function clearCollection(collectionName) {
     const snap = await getDocs(collection(db, collectionName));
     const ids = snap.docs.map(d => d.id);
-    const CHUNK_SIZE = 400;
     const promises = [];
 
-    for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
-        const chunk = ids.slice(i, i + CHUNK_SIZE);
+    for (let i = 0; i < ids.length; i += 400) {
+        const chunk = ids.slice(i, i + 400);
         const batch = writeBatch(db);
         chunk.forEach(id => batch.delete(doc(db, collectionName, id)));
         promises.push(batch.commit());
@@ -57,12 +57,11 @@ async function replaceAuditData(rows) {
     const metaRef = doc(db, 'meta', 'auditData');
     const metaSnap = await getDoc(metaRef);
     const prevCount = metaSnap.exists() ? (metaSnap.data().count || 0) : 0;
-    const CHUNK_SIZE = 400;
 
     // Concurrent Deletion
     const deletePromises = [];
-    for (let i = 0; i < prevCount; i += CHUNK_SIZE) {
-        const end = Math.min(i + CHUNK_SIZE, prevCount);
+    for (let i = 0; i < prevCount; i += 400) {
+        const end = Math.min(i + 400, prevCount);
         const batch = writeBatch(db);
         for (let j = i; j < end; j++) batch.delete(doc(db, 'auditData', 'row_' + j));
         deletePromises.push(batch.commit());
@@ -71,8 +70,8 @@ async function replaceAuditData(rows) {
 
     // Concurrent Insertion
     const setPromises = [];
-    for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
-        const chunk = rows.slice(i, i + CHUNK_SIZE);
+    for (let i = 0; i < rows.length; i += 400) {
+        const chunk = rows.slice(i, i + 400);
         const batch = writeBatch(db);
         chunk.forEach((row, idx) => batch.set(doc(db, 'auditData', 'row_' + (i + idx)), row));
         setPromises.push(batch.commit());
@@ -102,14 +101,8 @@ function switchAuthTab(which) {
     const loginPane = document.getElementById('loginPane');
     const signupPane = document.getElementById('signupPane');
 
-    if (tabLogin) {
-        tabLogin.classList.toggle('active', which === 'login');
-        tabLogin.setAttribute('aria-selected', which === 'login');
-    }
-    if (tabSignup) {
-        tabSignup.classList.toggle('active', which === 'signup');
-        tabSignup.setAttribute('aria-selected', which === 'signup');
-    }
+    if (tabLogin) tabLogin.classList.toggle('active', which === 'login');
+    if (tabSignup) tabSignup.classList.toggle('active', which === 'signup');
     if (loginPane) loginPane.style.display = which === 'login' ? 'block' : 'none';
     if (signupPane) signupPane.style.display = which === 'signup' ? 'block' : 'none';
 }
@@ -389,13 +382,13 @@ const HIT_PARAMS = [
     { col: 'Unfriendly/discourteous/sarcastic?', category: 'Personable', label: 'Unfriendly, discourteous, or sarcastic tone', type: 'descriptive' },
     { col: 'Sounded transactional or robotic?', category: 'Personable', label: 'Sounded transactional or robotic', type: 'descriptive' },
     { col: 'FAST: Were there other Agent factors observed that affected the customer experience?', category: 'Fast', label: 'Other agent factor slowed the resolution', type: 'descriptive' },
-    { col: 'DID WE FOLLOW THE CUSTOMER AUTHENTICATION PROCESS?', category: 'SafeSecured', label: 'Customer authentication process missed', type: 'boolean', hitValue: 'NO' },
-    { col: 'DID WE FOLLOW THE DATA PRIVACY POLICY?', category: 'SafeSecured', label: 'Data privacy policy not followed', type: 'boolean', hitValue: 'NO' },
-    { col: 'DID WE UPDATE THE CUSTOMER INFORMATION IN THE TOOL?', category: 'SafeSecured', label: 'Customer info not updated in tool', type: 'boolean', hitValue: 'NO' },
-    { col: 'DID WE FOLLOW THE CSAT/NPS PROCESS?', category: 'SafeSecured', label: 'CSAT/NPS process not followed', type: 'boolean', hitValue: 'NO' },
-    { col: 'DID WE FOLLOW THE SYSTEM DOCUMENTATION PROCESS?', category: 'SafeSecured', label: 'System documentation process missed', type: 'boolean', hitValue: 'NO' },
-    { col: 'DID WE FOLLOW THE SYSTEM TAGGING PROCESS?', category: 'SafeSecured', label: 'System tagging process missed', type: 'boolean', hitValue: 'NO' },
-    { col: 'DID WE FOLLOW CORRECT GRAMMAR, TECHNICAL WRITING & THE PRESCRIBED LANGUAGE?', category: 'SafeSecured', label: 'Grammar / prescribed language standard missed', type: 'boolean', hitValue: 'NO' },
+    { col: 'DID WE FOLLOW THE CUSTOMER AUTHENTICATION PROCESS?', category: 'Safe & Secure', label: 'Customer authentication process missed', type: 'boolean', hitValue: 'NO' },
+    { col: 'DID WE FOLLOW THE DATA PRIVACY POLICY?', category: 'Safe & Secure', label: 'Data privacy policy not followed', type: 'boolean', hitValue: 'NO' },
+    { col: 'DID WE UPDATE THE CUSTOMER INFORMATION IN THE TOOL?', category: 'Safe & Secure', label: 'Customer info not updated in tool', type: 'boolean', hitValue: 'NO' },
+    { col: 'DID WE FOLLOW THE CSAT/NPS PROCESS?', category: 'Safe & Secure', label: 'CSAT/NPS process not followed', type: 'boolean', hitValue: 'NO' },
+    { col: 'DID WE FOLLOW THE SYSTEM DOCUMENTATION PROCESS?', category: 'Safe & Secure', label: 'System documentation process missed', type: 'boolean', hitValue: 'NO' },
+    { col: 'DID WE FOLLOW THE SYSTEM TAGGING PROCESS?', category: 'Safe & Secure', label: 'System tagging process missed', type: 'boolean', hitValue: 'NO' },
+    { col: 'DID WE FOLLOW CORRECT GRAMMAR, TECHNICAL WRITING & THE PRESCRIBED LANGUAGE?', category: 'Safe & Secure', label: 'Grammar / prescribed language standard missed', type: 'boolean', hitValue: 'NO' },
     { col: "IS THIS A POTENTIAL CUSTOMER MISTREAT?", category: 'Mistreat', label: 'Potential customer mistreat flagged', type: 'boolean', hitValue: 'YES' }
 ];
 
@@ -552,10 +545,9 @@ async function resyncAgentEmails() {
 
         let matched = 0, unmatched = 0;
         const promises = [];
-        const CHUNK_SIZE = 400;
 
-        for (let i = 0; i < docs.length; i += CHUNK_SIZE) {
-            const chunk = docs.slice(i, i + CHUNK_SIZE);
+        for (let i = 0; i < docs.length; i += 400) {
+            const chunk = docs.slice(i, i + 400);
             const batch = writeBatch(db);
             chunk.forEach(d => {
                 const row = d.data();
@@ -656,7 +648,7 @@ function populateDropdownOptions(rows) {
         if (!sel) return;
         const current = sel.value;
         const uniques = [...new Set(rows.map(r => r[field]).filter(Boolean))].sort();
-        sel.innerHTML = `<option value="ALL">(All)</option>` + uniques.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+        sel.innerHTML = `<option value="ALL">(All)</option>` + uniques.map(v => `<option value="${v}">${v}</option>`).join('');
         if (uniques.includes(current)) sel.value = current;
     });
 }
@@ -727,13 +719,91 @@ function tenureBucket(tenureStr) {
     return 'b3';
 }
 
+function renderGroupedBarChart(data) {
+    const canvas = document.getElementById('lobChartCanvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+
+    const groups = {};
+    data.forEach(r => {
+        const lob = r['LINE OF BUSINESS'] || r['BRAND'] || 'Unspecified';
+        if (!groups[lob]) {
+            groups[lob] = { reliable: [], personable: [], fast: [], safe: [], overall: [] };
+        }
+        if (r['RELIABLE'] !== null && !isNaN(r['RELIABLE'])) groups[lob].reliable.push(r['RELIABLE']);
+        if (r['PERSONABLE'] !== null && !isNaN(r['PERSONABLE'])) groups[lob].personable.push(r['PERSONABLE']);
+        if (r['FAST'] !== null && !isNaN(r['FAST'])) groups[lob].fast.push(r['FAST']);
+        if (r['SAFE & SECURE'] !== null && !isNaN(r['SAFE & SECURE'])) groups[lob].safe.push(r['SAFE & SECURE']);
+        if (r['OVERALL SCORE'] !== null && !isNaN(r['OVERALL SCORE'])) groups[lob].overall.push(r['OVERALL SCORE']);
+    });
+
+    const labels = Object.keys(groups).sort();
+    const getAvg = (arr) => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : 0;
+
+    const dataReliable = labels.map(l => getAvg(groups[l].reliable));
+    const dataPersonable = labels.map(l => getAvg(groups[l].personable));
+    const dataFast = labels.map(l => getAvg(groups[l].fast));
+    const dataSafe = labels.map(l => getAvg(groups[l].safe));
+    const dataOverall = labels.map(l => getAvg(groups[l].overall));
+
+    if (lobChartInstance) {
+        lobChartInstance.destroy();
+    }
+
+    lobChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                { label: 'Reliable', data: dataReliable, backgroundColor: '#B0BEC5' },
+                { label: 'Personable', data: dataPersonable, backgroundColor: '#78909C' },
+                { label: 'Fast', data: dataFast, backgroundColor: '#006064' },
+                { label: 'Safe & Secure', data: dataSafe, backgroundColor: '#004D40' },
+                { label: 'Overall Score', data: dataOverall, backgroundColor: '#072F45' }
+            ]
+        },
+        plugins: [ChartDataLabels],
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'top',
+                    labels: {
+                        usePointStyle: true,
+                        pointStyle: 'rect',
+                        padding: 15,
+                        font: { size: 10, weight: 'bold' }
+                    }
+                },
+                datalabels: {
+                    anchor: 'end',
+                    align: 'end',
+                    formatter: (val) => val ? val + '%' : '',
+                    font: { size: 9, weight: 'bold' },
+                    color: '#333'
+                }
+            },
+            scales: {
+                y: {
+                    display: false,
+                    max: 115
+                },
+                x: {
+                    grid: { display: false },
+                    ticks: { font: { size: 10, weight: '600' }, color: '#333' }
+                }
+            }
+        }
+    });
+}
+
 function renderSupervisorDashboard(data) {
     const totalPassRateVal = document.getElementById('totalPassRateVal');
     const totalFailRateVal = document.getElementById('totalFailRateVal');
     const cmSuperstarVal = document.getElementById('cmSuperstarVal');
     const cmUnderperformerVal = document.getElementById('cmUnderperformerVal');
     const leaderChart = document.getElementById('leaderChart');
-    const parameterChart = document.getElementById('parameterChart');
     const topHitsTable = document.getElementById('topHitsTable');
     const clusterDistTable = document.getElementById('clusterDistTable');
 
@@ -746,11 +816,17 @@ function renderSupervisorDashboard(data) {
         if (cmSuperstarVal) cmSuperstarVal.textContent = '-';
         if (cmUnderperformerVal) cmUnderperformerVal.textContent = '-';
         if (leaderChart) leaderChart.innerHTML = '<div class="empty-note">No matching data.</div>';
-        if (parameterChart) parameterChart.innerHTML = '<div class="empty-note">No matching data.</div>';
         if (topHitsBody) topHitsBody.innerHTML = '<tr><td colspan="3" class="empty-note">No matching audit data available.</td></tr>';
         if (clusterDistBody) clusterDistBody.innerHTML = '<tr><td colspan="7" class="empty-note">No matching audit data available.</td></tr>';
+        
+        if (lobChartInstance) {
+            lobChartInstance.destroy();
+            lobChartInstance = null;
+        }
         return;
     }
+
+    renderGroupedBarChart(data);
 
     const avg = (key) => {
         const vals = data.map(r => r[key]).filter(v => v !== null && v !== undefined && !isNaN(v));
@@ -759,34 +835,6 @@ function renderSupervisorDashboard(data) {
     };
 
     const avgOverall = avg('OVERALL SCORE');
-
-    // Calculated LOB Metrics
-    const lobScores = {};
-    data.forEach(r => {
-        const lob = r['LINE OF BUSINESS'] || r['BRAND'] || 'Unspecified LOB';
-        if (!lobScores[lob]) lobScores[lob] = { total: 0, count: 0 };
-        if (r['OVERALL SCORE'] !== null && r['OVERALL SCORE'] !== undefined && !isNaN(r['OVERALL SCORE'])) {
-            lobScores[lob].total += r['OVERALL SCORE'];
-            lobScores[lob].count++;
-        }
-    });
-
-    const lobColors = ['#C8102E', '#7a0f1e', '#1a1a1a', '#6b6b6b', '#f0c4c9', '#d9534f', '#0275d8'];
-    const lobNames = Object.keys(lobScores).sort();
-
-    if (parameterChart) {
-        parameterChart.innerHTML = lobNames.length
-            ? lobNames.map((lob, i) => {
-                const s = lobScores[lob];
-                const a = s.count ? Math.round(s.total / s.count) : 0;
-                return `<div class="bar-wrapper">
-                    <div class="bar-value">${a}%</div>
-                    <div class="bar" style="background:${lobColors[i % lobColors.length]};height:${a}%;"></div>
-                    <div class="bar-label">${escapeHtml(lob)}</div>
-                </div>`;
-            }).join('')
-            : '<div class="empty-note">No matching data.</div>';
-    }
 
     const isPassed = (r) => r['OVERALL PASSRATE'] ? r['OVERALL PASSRATE'] === 'PASSED' : (r['OVERALL SCORE'] || 0) >= 85;
     const passed = data.filter(isPassed).length;
@@ -938,7 +986,7 @@ async function renderAgentView() {
     const scorecard = document.getElementById('agentScorecard');
     if (scorecard) {
         scorecard.innerHTML = tiles.map(t =>
-            `<div class="score-tile"><div class="num">${t.val === null ? '-' : t.val + '%'}</div><div class="lbl">${escapeHtml(t.label)}</div></div>`
+            `<div class="score-tile"><div class="num">${t.val === null ? '-' : t.val + '%'}</div><div class="lbl">${t.label}</div></div>`
         ).join('');
     }
 
@@ -949,7 +997,7 @@ async function renderAgentView() {
         const score = r['OVERALL SCORE'];
         const passed = r['OVERALL PASSRATE'] ? r['OVERALL PASSRATE'] === 'PASSED' : (score !== null && score >= 85);
         const tagsHtml = issues.length
-            ? issues.map(i => `<span class="tag ${escapeHtml(i.category.replace(/\s|&/g, ''))}">${escapeHtml(i.label)}</span>`).join('')
+            ? issues.map(i => `<span class="tag ${i.category.replace(/\s|&/g, '')}">${escapeHtml(i.label)}</span>`).join('')
             : `<span class="no-issues-note">✓ No parameters flagged on this audit.</span>`;
 
         const comments = ['RELIABLE: ADDITIONAL COMMENTS', 'PERSONABLE: ADDITIONAL COMMENTS', 'FAST: ADDITIONAL COMMENTS']
@@ -993,7 +1041,7 @@ async function renderAgentView() {
             })();
             return `<details class="month-group" ${idx === 0 ? 'open' : ''}>
                 <summary class="month-summary">
-                    <span>${escapeHtml(month)} <span class="month-count">(${rows.length} audit${rows.length === 1 ? '' : 's'})</span></span>
+                    <span>${month} <span class="month-count">(${rows.length} audit${rows.length === 1 ? '' : 's'})</span></span>
                     <span class="month-avg">${monthAvg === null ? '' : 'avg ' + monthAvg + '%'}</span>
                 </summary>
                 <div class="month-body">${rows.map(auditRowHtml).join('')}</div>
@@ -1003,38 +1051,19 @@ async function renderAgentView() {
 }
 
 /* ==========================================================================
-   INITIALIZATION & EVENT BINDINGS
+   GLOBAL EXPORTS & INITIALIZATION
    ========================================================================== */
-document.addEventListener('DOMContentLoaded', () => {
-    // Auth Tabs
-    document.getElementById('tabLogin')?.addEventListener('click', () => switchAuthTab('login'));
-    document.getElementById('tabSignup')?.addEventListener('click', () => switchAuthTab('signup'));
+window.switchAuthTab = switchAuthTab;
+window.setSignupRole = setSignupRole;
+window.handleSignup = handleSignup;
+window.handleLogin = handleLogin;
+window.quickAccess = quickAccess;
+window.logout = logout;
+window.filterData = filterData;
+window.resetFilters = resetFilters;
+window.toggleUploadPanel = toggleUploadPanel;
+window.handleRosterUpload = handleRosterUpload;
+window.handleDataUpload = handleDataUpload;
+window.resyncAgentEmails = resyncAgentEmails;
 
-    // Role Toggles
-    document.getElementById('roleAgentLabel')?.addEventListener('click', () => setSignupRole('agent'));
-    document.getElementById('roleTeamLeaderLabel')?.addEventListener('click', () => setSignupRole('team_leader'));
-    document.getElementById('roleQualityLabel')?.addEventListener('click', () => setSignupRole('quality'));
-
-    // Auth Buttons
-    document.getElementById('btnLoginSubmit')?.addEventListener('click', handleLogin);
-    document.getElementById('btnSignupSubmit')?.addEventListener('click', handleSignup);
-    document.getElementById('btnLogout')?.addEventListener('click', logout);
-
-    // Quick Access
-    document.getElementById('btnQuickTL')?.addEventListener('click', () => quickAccess('team_leader'));
-    document.getElementById('btnQuickQA')?.addEventListener('click', () => quickAccess('quality'));
-
-    // Sidebar & Uploads
-    document.getElementById('uploadIconBtn')?.addEventListener('click', toggleUploadPanel);
-    document.getElementById('btnResetFilters')?.addEventListener('click', resetFilters);
-    document.getElementById('btnResync')?.addEventListener('click', resyncAgentEmails);
-    document.getElementById('rosterFileInput')?.addEventListener('change', handleRosterUpload);
-    document.getElementById('dataFileInput')?.addEventListener('change', handleDataUpload);
-
-    // Filters
-    ['selectFormType', 'selectBrand', 'selectMonth', 'selectWeekending', 'selectTenure', 'selectTeamLeader'].forEach(id => {
-        document.getElementById(id)?.addEventListener('change', filterData);
-    });
-
-    setSignupRole('agent');
-});
+setSignupRole('agent');
