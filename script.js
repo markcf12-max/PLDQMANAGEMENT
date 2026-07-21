@@ -1,5 +1,5 @@
 /* ==========================================================================
-   FIREBASE IMPORTS
+   FIREBASE IMPORTS & CONSTANTS
    ========================================================================== */
 import { auth, db } from './firebase-config.js';
 import {
@@ -10,28 +10,29 @@ import {
     onAuthStateChanged
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import {
-    doc, getDoc, setDoc, deleteDoc,
+    doc, getDoc, setDoc,
     collection, query, where, getDocs, writeBatch
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 const TEAM_LEADER_INVITE_CODE = 'PLDT-TL-2026';
-const QUALITY_INVITE_CODE = 'PLDT-QA-2026'; 
+const QUALITY_INVITE_CODE = 'PLDT-QA-2026';
 
 /* ==========================================================================
-   FIRESTORE BATCH HELPERS (Concurrent Writes)
+   FIRESTORE BATCH HELPERS
    ========================================================================== */
-async function batchWriteDocs(collectionName, docs, idFn) {
-    const chunks = [];
-    for (let i = 0; i < docs.length; i += 400) chunks.push(docs.slice(i, i + 400));
-    
-    const promises = chunks.map(chunk => {
+async function batchWriteDocs(collectionName, docsArray, idFn) {
+    const CHUNK_SIZE = 400;
+    const promises = [];
+
+    for (let i = 0; i < docsArray.length; i += CHUNK_SIZE) {
+        const chunk = docsArray.slice(i, i + CHUNK_SIZE);
         const batch = writeBatch(db);
         chunk.forEach(d => {
             const ref = idFn ? doc(db, collectionName, idFn(d)) : doc(collection(db, collectionName));
             batch.set(ref, d);
         });
-        return batch.commit();
-    });
+        promises.push(batch.commit());
+    }
 
     await Promise.all(promises);
 }
@@ -39,10 +40,11 @@ async function batchWriteDocs(collectionName, docs, idFn) {
 async function clearCollection(collectionName) {
     const snap = await getDocs(collection(db, collectionName));
     const ids = snap.docs.map(d => d.id);
+    const CHUNK_SIZE = 400;
     const promises = [];
 
-    for (let i = 0; i < ids.length; i += 400) {
-        const chunk = ids.slice(i, i + 400);
+    for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+        const chunk = ids.slice(i, i + CHUNK_SIZE);
         const batch = writeBatch(db);
         chunk.forEach(id => batch.delete(doc(db, collectionName, id)));
         promises.push(batch.commit());
@@ -55,11 +57,12 @@ async function replaceAuditData(rows) {
     const metaRef = doc(db, 'meta', 'auditData');
     const metaSnap = await getDoc(metaRef);
     const prevCount = metaSnap.exists() ? (metaSnap.data().count || 0) : 0;
+    const CHUNK_SIZE = 400;
 
     // Concurrent Deletion
     const deletePromises = [];
-    for (let i = 0; i < prevCount; i += 400) {
-        const end = Math.min(i + 400, prevCount);
+    for (let i = 0; i < prevCount; i += CHUNK_SIZE) {
+        const end = Math.min(i + CHUNK_SIZE, prevCount);
         const batch = writeBatch(db);
         for (let j = i; j < end; j++) batch.delete(doc(db, 'auditData', 'row_' + j));
         deletePromises.push(batch.commit());
@@ -68,8 +71,8 @@ async function replaceAuditData(rows) {
 
     // Concurrent Insertion
     const setPromises = [];
-    for (let i = 0; i < rows.length; i += 400) {
-        const chunk = rows.slice(i, i + 400);
+    for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+        const chunk = rows.slice(i, i + CHUNK_SIZE);
         const batch = writeBatch(db);
         chunk.forEach((row, idx) => batch.set(doc(db, 'auditData', 'row_' + (i + idx)), row));
         setPromises.push(batch.commit());
@@ -99,8 +102,14 @@ function switchAuthTab(which) {
     const loginPane = document.getElementById('loginPane');
     const signupPane = document.getElementById('signupPane');
 
-    if (tabLogin) tabLogin.classList.toggle('active', which === 'login');
-    if (tabSignup) tabSignup.classList.toggle('active', which === 'signup');
+    if (tabLogin) {
+        tabLogin.classList.toggle('active', which === 'login');
+        tabLogin.setAttribute('aria-selected', which === 'login');
+    }
+    if (tabSignup) {
+        tabSignup.classList.toggle('active', which === 'signup');
+        tabSignup.setAttribute('aria-selected', which === 'signup');
+    }
     if (loginPane) loginPane.style.display = which === 'login' ? 'block' : 'none';
     if (signupPane) signupPane.style.display = which === 'signup' ? 'block' : 'none';
 }
@@ -380,13 +389,13 @@ const HIT_PARAMS = [
     { col: 'Unfriendly/discourteous/sarcastic?', category: 'Personable', label: 'Unfriendly, discourteous, or sarcastic tone', type: 'descriptive' },
     { col: 'Sounded transactional or robotic?', category: 'Personable', label: 'Sounded transactional or robotic', type: 'descriptive' },
     { col: 'FAST: Were there other Agent factors observed that affected the customer experience?', category: 'Fast', label: 'Other agent factor slowed the resolution', type: 'descriptive' },
-    { col: 'DID WE FOLLOW THE CUSTOMER AUTHENTICATION PROCESS?', category: 'Safe & Secure', label: 'Customer authentication process missed', type: 'boolean', hitValue: 'NO' },
-    { col: 'DID WE FOLLOW THE DATA PRIVACY POLICY?', category: 'Safe & Secure', label: 'Data privacy policy not followed', type: 'boolean', hitValue: 'NO' },
-    { col: 'DID WE UPDATE THE CUSTOMER INFORMATION IN THE TOOL?', category: 'Safe & Secure', label: 'Customer info not updated in tool', type: 'boolean', hitValue: 'NO' },
-    { col: 'DID WE FOLLOW THE CSAT/NPS PROCESS?', category: 'Safe & Secure', label: 'CSAT/NPS process not followed', type: 'boolean', hitValue: 'NO' },
-    { col: 'DID WE FOLLOW THE SYSTEM DOCUMENTATION PROCESS?', category: 'Safe & Secure', label: 'System documentation process missed', type: 'boolean', hitValue: 'NO' },
-    { col: 'DID WE FOLLOW THE SYSTEM TAGGING PROCESS?', category: 'Safe & Secure', label: 'System tagging process missed', type: 'boolean', hitValue: 'NO' },
-    { col: 'DID WE FOLLOW CORRECT GRAMMAR, TECHNICAL WRITING & THE PRESCRIBED LANGUAGE?', category: 'Safe & Secure', label: 'Grammar / prescribed language standard missed', type: 'boolean', hitValue: 'NO' },
+    { col: 'DID WE FOLLOW THE CUSTOMER AUTHENTICATION PROCESS?', category: 'SafeSecured', label: 'Customer authentication process missed', type: 'boolean', hitValue: 'NO' },
+    { col: 'DID WE FOLLOW THE DATA PRIVACY POLICY?', category: 'SafeSecured', label: 'Data privacy policy not followed', type: 'boolean', hitValue: 'NO' },
+    { col: 'DID WE UPDATE THE CUSTOMER INFORMATION IN THE TOOL?', category: 'SafeSecured', label: 'Customer info not updated in tool', type: 'boolean', hitValue: 'NO' },
+    { col: 'DID WE FOLLOW THE CSAT/NPS PROCESS?', category: 'SafeSecured', label: 'CSAT/NPS process not followed', type: 'boolean', hitValue: 'NO' },
+    { col: 'DID WE FOLLOW THE SYSTEM DOCUMENTATION PROCESS?', category: 'SafeSecured', label: 'System documentation process missed', type: 'boolean', hitValue: 'NO' },
+    { col: 'DID WE FOLLOW THE SYSTEM TAGGING PROCESS?', category: 'SafeSecured', label: 'System tagging process missed', type: 'boolean', hitValue: 'NO' },
+    { col: 'DID WE FOLLOW CORRECT GRAMMAR, TECHNICAL WRITING & THE PRESCRIBED LANGUAGE?', category: 'SafeSecured', label: 'Grammar / prescribed language standard missed', type: 'boolean', hitValue: 'NO' },
     { col: "IS THIS A POTENTIAL CUSTOMER MISTREAT?", category: 'Mistreat', label: 'Potential customer mistreat flagged', type: 'boolean', hitValue: 'YES' }
 ];
 
@@ -543,9 +552,10 @@ async function resyncAgentEmails() {
 
         let matched = 0, unmatched = 0;
         const promises = [];
+        const CHUNK_SIZE = 400;
 
-        for (let i = 0; i < docs.length; i += 400) {
-            const chunk = docs.slice(i, i + 400);
+        for (let i = 0; i < docs.length; i += CHUNK_SIZE) {
+            const chunk = docs.slice(i, i + CHUNK_SIZE);
             const batch = writeBatch(db);
             chunk.forEach(d => {
                 const row = d.data();
@@ -646,7 +656,7 @@ function populateDropdownOptions(rows) {
         if (!sel) return;
         const current = sel.value;
         const uniques = [...new Set(rows.map(r => r[field]).filter(Boolean))].sort();
-        sel.innerHTML = `<option value="ALL">(All)</option>` + uniques.map(v => `<option value="${v}">${v}</option>`).join('');
+        sel.innerHTML = `<option value="ALL">(All)</option>` + uniques.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
         if (uniques.includes(current)) sel.value = current;
     });
 }
@@ -928,7 +938,7 @@ async function renderAgentView() {
     const scorecard = document.getElementById('agentScorecard');
     if (scorecard) {
         scorecard.innerHTML = tiles.map(t =>
-            `<div class="score-tile"><div class="num">${t.val === null ? '-' : t.val + '%'}</div><div class="lbl">${t.label}</div></div>`
+            `<div class="score-tile"><div class="num">${t.val === null ? '-' : t.val + '%'}</div><div class="lbl">${escapeHtml(t.label)}</div></div>`
         ).join('');
     }
 
@@ -939,7 +949,7 @@ async function renderAgentView() {
         const score = r['OVERALL SCORE'];
         const passed = r['OVERALL PASSRATE'] ? r['OVERALL PASSRATE'] === 'PASSED' : (score !== null && score >= 85);
         const tagsHtml = issues.length
-            ? issues.map(i => `<span class="tag ${i.category.replace(/\s|&/g, '')}">${escapeHtml(i.label)}</span>`).join('')
+            ? issues.map(i => `<span class="tag ${escapeHtml(i.category.replace(/\s|&/g, ''))}">${escapeHtml(i.label)}</span>`).join('')
             : `<span class="no-issues-note">✓ No parameters flagged on this audit.</span>`;
 
         const comments = ['RELIABLE: ADDITIONAL COMMENTS', 'PERSONABLE: ADDITIONAL COMMENTS', 'FAST: ADDITIONAL COMMENTS']
@@ -983,7 +993,7 @@ async function renderAgentView() {
             })();
             return `<details class="month-group" ${idx === 0 ? 'open' : ''}>
                 <summary class="month-summary">
-                    <span>${month} <span class="month-count">(${rows.length} audit${rows.length === 1 ? '' : 's'})</span></span>
+                    <span>${escapeHtml(month)} <span class="month-count">(${rows.length} audit${rows.length === 1 ? '' : 's'})</span></span>
                     <span class="month-avg">${monthAvg === null ? '' : 'avg ' + monthAvg + '%'}</span>
                 </summary>
                 <div class="month-body">${rows.map(auditRowHtml).join('')}</div>
@@ -993,19 +1003,38 @@ async function renderAgentView() {
 }
 
 /* ==========================================================================
-   GLOBAL EXPORTS & INITIALIZATION
+   INITIALIZATION & EVENT BINDINGS
    ========================================================================== */
-window.switchAuthTab = switchAuthTab;
-window.setSignupRole = setSignupRole;
-window.handleSignup = handleSignup;
-window.handleLogin = handleLogin;
-window.quickAccess = quickAccess;
-window.logout = logout;
-window.filterData = filterData;
-window.resetFilters = resetFilters;
-window.toggleUploadPanel = toggleUploadPanel;
-window.handleRosterUpload = handleRosterUpload;
-window.handleDataUpload = handleDataUpload;
-window.resyncAgentEmails = resyncAgentEmails;
+document.addEventListener('DOMContentLoaded', () => {
+    // Auth Tabs
+    document.getElementById('tabLogin')?.addEventListener('click', () => switchAuthTab('login'));
+    document.getElementById('tabSignup')?.addEventListener('click', () => switchAuthTab('signup'));
 
-setSignupRole('agent');
+    // Role Toggles
+    document.getElementById('roleAgentLabel')?.addEventListener('click', () => setSignupRole('agent'));
+    document.getElementById('roleTeamLeaderLabel')?.addEventListener('click', () => setSignupRole('team_leader'));
+    document.getElementById('roleQualityLabel')?.addEventListener('click', () => setSignupRole('quality'));
+
+    // Auth Buttons
+    document.getElementById('btnLoginSubmit')?.addEventListener('click', handleLogin);
+    document.getElementById('btnSignupSubmit')?.addEventListener('click', handleSignup);
+    document.getElementById('btnLogout')?.addEventListener('click', logout);
+
+    // Quick Access
+    document.getElementById('btnQuickTL')?.addEventListener('click', () => quickAccess('team_leader'));
+    document.getElementById('btnQuickQA')?.addEventListener('click', () => quickAccess('quality'));
+
+    // Sidebar & Uploads
+    document.getElementById('uploadIconBtn')?.addEventListener('click', toggleUploadPanel);
+    document.getElementById('btnResetFilters')?.addEventListener('click', resetFilters);
+    document.getElementById('btnResync')?.addEventListener('click', resyncAgentEmails);
+    document.getElementById('rosterFileInput')?.addEventListener('change', handleRosterUpload);
+    document.getElementById('dataFileInput')?.addEventListener('change', handleDataUpload);
+
+    // Filters
+    ['selectFormType', 'selectBrand', 'selectMonth', 'selectWeekending', 'selectTenure', 'selectTeamLeader'].forEach(id => {
+        document.getElementById(id)?.addEventListener('change', filterData);
+    });
+
+    setSignupRole('agent');
+});
