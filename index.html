@@ -1,17 +1,18 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PLDT Quality Score and Cluster Management Dashboard</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<link rel="stylesheet" href="styles.css">
-<script type="module" src="script.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PLDT Quality Score and Cluster Management Dashboard</title>
+    <!-- SheetJS CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <link rel="stylesheet" href="styles.css">
+    <script type="module" src="script.js"></script>
 </head>
 <body>
 
 <!-- ============ HEADER ============ -->
-<div class="header-banner">
+<header class="header-banner">
     <div class="header-left">
         <span class="header-logo">PLDT Quality Management</span>
     </div>
@@ -21,147 +22,155 @@
     </div>
     <div class="header-right">
         <span class="brand-tag">CONDUENT</span>
-        <span id="sessionChip" class="session-chip" style="display:none;">
+        <div id="sessionChip" class="session-chip" style="display:none;">
             <span id="sessionLabel"></span>
-            <button class="btn-logout" onclick="logout()">Log out</button>
-        </span>
+            <button type="button" class="btn-logout" id="btnLogout">Log out</button>
+        </div>
     </div>
-</div>
+</header>
 
 <!-- ============ AUTH SCREEN ============ -->
-<div class="auth-wrap" id="authScreen">
+<main class="auth-wrap" id="authScreen">
     <div class="auth-card">
-        <div class="auth-tabs">
-            <div class="auth-tab active" id="tabLogin" onclick="switchAuthTab('login')">Log In</div>
-            <div class="auth-tab" id="tabSignup" onclick="switchAuthTab('signup')">Create Account</div>
+        <div class="auth-tabs" role="tablist">
+            <button type="button" class="auth-tab active" id="tabLogin" role="tab" aria-selected="true">Log In</button>
+            <button type="button" class="auth-tab" id="tabSignup" role="tab" aria-selected="false">Create Account</button>
         </div>
 
-        <!-- LOGIN -->
+        <!-- LOGIN PANE -->
         <div class="auth-body" id="loginPane">
             <h2>Welcome back</h2>
             <p class="sub">Log in with your work email to view your Quality Score dashboard.</p>
             <div class="form-group">
-                <label>Work Email</label>
+                <label for="loginEmail">Work Email</label>
                 <input type="email" id="loginEmail" placeholder="name@company.com" autocomplete="username">
             </div>
             <div class="form-group">
-                <label>Password</label>
+                <label for="loginPassword">Password</label>
                 <input type="password" id="loginPassword" placeholder="••••••••" autocomplete="current-password">
             </div>
-            <button class="btn-primary" onclick="handleLogin()">Log In</button>
-            <div class="auth-msg" id="loginMsg"></div>
+            <button type="button" class="btn-primary" id="btnLoginSubmit">Log In</button>
+            <div class="auth-msg" id="loginMsg" role="alert"></div>
 
             <div class="auth-hint">
                 <strong>Temporary quick access</strong> — use while setting up real accounts. Remove this section once your team is signing up normally.
-                <div style="display:flex; gap:8px; margin-top:8px;">
-                    <button type="button" class="btn-primary" style="background:#1a1a1a;" onclick="quickAccess('team_leader')">Team Leader</button>
-                    <button type="button" class="btn-primary" style="background:#1a1a1a;" onclick="quickAccess('quality')">Quality</button>
+                <div class="quick-access-btns">
+                    <button type="button" class="btn-primary btn-dark" id="btnQuickTL">Team Leader</button>
+                    <button type="button" class="btn-primary btn-dark" id="btnQuickQA">Quality</button>
                 </div>
             </div>
         </div>
 
-        <!-- SIGNUP -->
+        <!-- SIGNUP PANE -->
         <div class="auth-body" id="signupPane" style="display:none;">
             <h2>Create your account</h2>
             <p class="sub">Agents are matched automatically to their audit scores using the roster your supervisor uploaded.</p>
 
             <div class="role-toggle">
-                <label id="roleAgentLabel" class="checked" onclick="setSignupRole('agent')"><span>Agent</span></label>
-                <label id="roleTeamLeaderLabel" onclick="setSignupRole('team_leader')"><span>Team Leader</span></label>
-                <label id="roleQualityLabel" onclick="setSignupRole('quality')"><span>Quality</span></label>
+                <label id="roleAgentLabel" class="checked">
+                    <span>Agent</span>
+                </label>
+                <label id="roleTeamLeaderLabel">
+                    <span>Team Leader</span>
+                </label>
+                <label id="roleQualityLabel">
+                    <span>Quality</span>
+                </label>
             </div>
 
             <div class="form-group">
-                <label>Work Email</label>
+                <label for="signupEmail">Work Email</label>
                 <input type="email" id="signupEmail" placeholder="name@pldt-agent-email.com" autocomplete="username">
             </div>
 
             <div class="field-row-2">
                 <div class="form-group">
-                    <label>Password</label>
+                    <label for="signupPassword">Password</label>
                     <input type="password" id="signupPassword" placeholder="••••••••" autocomplete="new-password">
                 </div>
                 <div class="form-group">
-                    <label>Confirm Password</label>
+                    <label for="signupPassword2">Confirm Password</label>
                     <input type="password" id="signupPassword2" placeholder="••••••••" autocomplete="new-password">
                 </div>
             </div>
 
             <div class="form-group" id="supervisorCodeGroup" style="display:none;">
-                <label id="supervisorCodeLabel">Invite Code</label>
+                <label id="supervisorCodeLabel" for="supervisorCode">Invite Code</label>
                 <input type="text" id="supervisorCode" placeholder="Enter the invite code given by your admin">
             </div>
 
-            <button class="btn-primary" onclick="handleSignup()">Create Account</button>
-            <div class="auth-msg" id="signupMsg"></div>
+            <button type="button" class="btn-primary" id="btnSignupSubmit">Create Account</button>
+            <div class="auth-msg" id="signupMsg" role="alert"></div>
 
             <div class="auth-hint">
-                Agent sign-up only succeeds if your email already appears on the roster a Quality account has uploaded. Team Leader and Quality accounts need an invite code from your admin (defaults: <code>PLDT-TL-2026</code> / <code>PLDT-QA-2026</code> — change these in <code>script.js</code> before real use).
+                Agent sign-up only succeeds if your email already appears on the roster a Quality account has uploaded. Team Leader and Quality accounts need an invite code from your admin (defaults: <code>PLDT-TL-2026</code> / <code>PLDT-QA-2026</code>).
             </div>
         </div>
     </div>
-</div>
+</main>
 
 <!-- ============ APP SCREEN ============ -->
-<div id="appScreen">
+<div id="appScreen" style="display:none;">
     <div class="app-body">
 
-        <!-- ===== SUPERVISOR VIEW ===== -->
-        <div class="sidebar" id="supervisorSidebar" style="display:none;">
+        <!-- ===== SUPERVISOR SIDEBAR ===== -->
+        <aside class="sidebar" id="supervisorSidebar" style="display:none;">
             <div class="filters-panel">
                 <div class="filters-panel-head">
                     <span>🔎 Filters</span>
-                    <button type="button" class="filters-reset" onclick="resetFilters()">Reset</button>
+                    <button type="button" class="filters-reset" id="btnResetFilters">Reset</button>
                 </div>
 
                 <div class="filter-field">
-                    <label>Form Type</label>
+                    <label for="selectFormType">Form Type</label>
                     <div class="select-wrap">
-                        <select id="selectFormType" onchange="filterData()"><option value="ALL">(All Form Types)</option></select>
+                        <select id="selectFormType"><option value="ALL">(All Form Types)</option></select>
                     </div>
                 </div>
                 <div class="filter-field">
-                    <label>LOB</label>
+                    <label for="selectBrand">LOB</label>
                     <div class="select-wrap">
-                        <select id="selectBrand" onchange="filterData()"><option value="ALL">(All LOB)</option></select>
+                        <select id="selectBrand"><option value="ALL">(All LOB)</option></select>
                     </div>
                 </div>
                 <div class="filter-field">
-                    <label>Month</label>
+                    <label for="selectMonth">Month</label>
                     <div class="select-wrap">
-                        <select id="selectMonth" onchange="filterData()"><option value="ALL">(All Months)</option></select>
+                        <select id="selectMonth"><option value="ALL">(All Months)</option></select>
                     </div>
                 </div>
                 <div class="filter-field">
-                    <label>Weekending</label>
+                    <label for="selectWeekending">Weekending</label>
                     <div class="select-wrap">
-                        <select id="selectWeekending" onchange="filterData()"><option value="ALL">(All Weekending)</option></select>
+                        <select id="selectWeekending"><option value="ALL">(All Weekending)</option></select>
                     </div>
                 </div>
                 <div class="filter-field">
-                    <label>Agent Tenure</label>
+                    <label for="selectTenure">Agent Tenure</label>
                     <div class="select-wrap">
-                        <select id="selectTenure" onchange="filterData()"><option value="ALL">(All Tenures)</option></select>
+                        <select id="selectTenure"><option value="ALL">(All Tenures)</option></select>
                     </div>
                 </div>
                 <div class="filter-field">
-                    <label>Team Leader</label>
+                    <label for="selectTeamLeader">Team Leader</label>
                     <div class="select-wrap">
-                        <select id="selectTeamLeader" onchange="filterData()"><option value="ALL">(All Team Leaders)</option></select>
+                        <select id="selectTeamLeader"><option value="ALL">(All Team Leaders)</option></select>
                     </div>
                 </div>
             </div>
 
             <div class="sidebar-top-row">
-                <button class="upload-icon-btn" id="uploadIconBtn" onclick="toggleUploadPanel()" title="Upload / manage data">📁<span class="upload-icon-label">Data</span></button>
+                <button type="button" class="upload-icon-btn" id="uploadIconBtn" title="Upload / manage data">
+                    📁<span class="upload-icon-label">Data</span>
+                </button>
             </div>
 
             <div class="upload-popover" id="uploadPopover" style="display:none;">
                 <div class="upload-section">
                     <h4>1. Agent Roster</h4>
                     <div class="upload-btn-wrapper">
-                        <button class="btn-upload">📇 Upload Roster (Email/Name/ID)</button>
-                        <input type="file" id="rosterFileInput" accept=".csv,.xlsx,.xls" onchange="handleRosterUpload(event)">
+                        <button type="button" class="btn-upload">📇 Upload Roster (Email/Name/ID)</button>
+                        <input type="file" id="rosterFileInput" accept=".csv,.xlsx,.xls">
                     </div>
                     <div class="file-status" id="rosterStatus">No roster loaded yet.</div>
                 </div>
@@ -169,17 +178,18 @@
                 <div class="upload-section">
                     <h4>2. Raw Audit Data</h4>
                     <div class="upload-btn-wrapper">
-                        <button class="btn-upload">📁 Upload Raw Data</button>
-                        <input type="file" id="dataFileInput" accept=".csv,.xlsx,.xls" onchange="handleDataUpload(event)">
+                        <button type="button" class="btn-upload">📁 Upload Raw Data</button>
+                        <input type="file" id="dataFileInput" accept=".csv,.xlsx,.xls">
                     </div>
                     <div class="file-status" id="dataStatus">No audit data loaded yet.</div>
-                    <button class="btn-upload" style="background:#1a1a1a;border-color:#1a1a1a;" onclick="resyncAgentEmails()">🔄 Re-sync Agent Matching</button>
-                    <div class="file-status" id="resyncStatus">Use this if agents uploaded/updated after data was already loaded, or if an agent can't see rows that should be theirs.</div>
+                    <button type="button" class="btn-upload btn-dark" id="btnResync">🔄 Re-sync Agent Matching</button>
+                    <div class="file-status" id="resyncStatus">Use this if agents uploaded/updated after data was loaded, or if an agent can't see their rows.</div>
                 </div>
             </div>
-        </div>
+        </aside>
 
-        <div class="dashboard-canvas" id="supervisorView" style="display:none;">
+        <!-- ===== SUPERVISOR DASHBOARD CANVAS ===== -->
+        <main class="dashboard-canvas" id="supervisorView" style="display:none;">
             <div class="tables-grid">
                 <div class="card-table">
                     <h3>Pass Rate %</h3>
@@ -195,6 +205,7 @@
                         </tbody>
                     </table>
                 </div>
+
                 <div class="card-table">
                     <h3>Number of Audits (by Tenure)</h3>
                     <table class="excel-table">
@@ -210,6 +221,7 @@
                         </tbody>
                     </table>
                 </div>
+
                 <div class="card-table">
                     <h3>Average QA Scores (by Tenure)</h3>
                     <table class="excel-table">
@@ -225,6 +237,7 @@
                         </tbody>
                     </table>
                 </div>
+
                 <div class="card-table">
                     <h3>CM Distribution</h3>
                     <table class="excel-table">
@@ -277,10 +290,10 @@
                     <tbody><tr><td colspan="7" class="empty-note">Upload data to populate.</td></tr></tbody>
                 </table>
             </div>
-        </div>
+        </main>
 
         <!-- ===== AGENT VIEW ===== -->
-        <div id="agentView">
+        <main id="agentView" style="display:none;">
             <div class="agent-welcome">
                 <h2 id="agentWelcomeName">Welcome</h2>
                 <p id="agentWelcomeSub">Here is your Genuine Care Audit performance summary.</p>
@@ -298,11 +311,10 @@
                     <div id="agentAuditList"></div>
                 </div>
             </div>
-        </div>
+        </main>
 
     </div>
 
-    <footer class="disclaimer">Prototype build · data stored in shared app storage, not a production database · do not enter real customer PII</footer>
 </div>
 
 </body>
