@@ -43,12 +43,7 @@ async function clearCollection(collectionName) {
 }
 
 /* Replaces the entire auditData collection using predictable IDs (row_0,
-   row_1, ...) tracked via a small metadata doc. This skips reading every
-   existing document just to find its ID before deleting it — cutting
-   Firestore operations per upload by roughly a third compared to
-   clearCollection() + batchWriteDocs(). The delete+write cost still scales
-   with row count (that's inherent to a full replace), so avoid uploading
-   repeatedly while testing — try a small trimmed sample file first. */
+   row_1, ...) tracked via a small metadata doc. */
 async function replaceAuditData(rows) {
     const metaRef = doc(db, 'meta', 'auditData');
     const metaSnap = await getDoc(metaRef);
@@ -73,8 +68,6 @@ async function replaceAuditData(rows) {
 
 /* ==========================================================================
    SESSION
-   Firebase Auth persists the session in the browser by default, so a page
-   refresh keeps the user logged in — onAuthStateChanged fires on load.
    ========================================================================== */
 let currentSession = null; // { uid, email, role, agentName, agentId }
 
@@ -82,48 +75,55 @@ let currentSession = null; // { uid, email, role, agentName, agentId }
    AUTH UI
    ========================================================================== */
 function switchAuthTab(which) {
-    document.getElementById('tabLogin').classList.toggle('active', which === 'login');
-    document.getElementById('tabSignup').classList.toggle('active', which === 'signup');
-    document.getElementById('loginPane').style.display = which === 'login' ? 'block' : 'none';
-    document.getElementById('signupPane').style.display = which === 'signup' ? 'block' : 'none';
+    const tabLogin = document.getElementById('tabLogin');
+    const tabSignup = document.getElementById('tabSignup');
+    const loginPane = document.getElementById('loginPane');
+    const signupPane = document.getElementById('signupPane');
+
+    if (tabLogin) tabLogin.classList.toggle('active', which === 'login');
+    if (tabSignup) tabSignup.classList.toggle('active', which === 'signup');
+    if (loginPane) loginPane.style.display = which === 'login' ? 'block' : 'none';
+    if (signupPane) signupPane.style.display = which === 'signup' ? 'block' : 'none';
 }
 
 let signupRole = 'agent';
 function setSignupRole(role) {
     signupRole = role;
-    document.getElementById('roleAgentLabel').classList.toggle('checked', role === 'agent');
-    document.getElementById('roleTeamLeaderLabel').classList.toggle('checked', role === 'team_leader');
-    document.getElementById('roleQualityLabel').classList.toggle('checked', role === 'quality');
+    const roleAgentLabel = document.getElementById('roleAgentLabel');
+    const roleTeamLeaderLabel = document.getElementById('roleTeamLeaderLabel');
+    const roleQualityLabel = document.getElementById('roleQualityLabel');
+    const supervisorCodeGroup = document.getElementById('supervisorCodeGroup');
+    const supervisorCodeLabel = document.getElementById('supervisorCodeLabel');
+
+    if (roleAgentLabel) roleAgentLabel.classList.toggle('checked', role === 'agent');
+    if (roleTeamLeaderLabel) roleTeamLeaderLabel.classList.toggle('checked', role === 'team_leader');
+    if (roleQualityLabel) roleQualityLabel.classList.toggle('checked', role === 'quality');
+    
     const needsCode = role === 'team_leader' || role === 'quality';
-    document.getElementById('supervisorCodeGroup').style.display = needsCode ? 'block' : 'none';
-    if (needsCode) {
-        document.getElementById('supervisorCodeLabel').textContent = role === 'team_leader' ? 'Team Leader Invite Code' : 'Quality Invite Code';
+    if (supervisorCodeGroup) supervisorCodeGroup.style.display = needsCode ? 'block' : 'none';
+    if (needsCode && supervisorCodeLabel) {
+        supervisorCodeLabel.textContent = role === 'team_leader' ? 'Team Leader Invite Code' : 'Quality Invite Code';
     }
 }
 
 function showAuthMsg(elId, text, ok) {
     const el = document.getElementById(elId);
+    if (!el) return;
     el.textContent = text;
     el.className = 'auth-msg ' + (ok ? 'ok' : 'error');
 }
 
-/* Guards the auto-firing onAuthStateChanged listener from reacting while
-   handleSignup is mid-flight. Creating an account signs the user in
-   immediately, which used to fire the listener WHILE handleSignup was still
-   checking the roster and writing the profile doc — a race that caused the
-   success message to disappear, or the new agent to get logged straight
-   into a half-set-up session. Login temporarily sets this too, so it can
-   drive enterApp() itself deterministically instead of racing the listener. */
 let authFlowInProgress = false;
-
-// Set this once you know PLDT's real agent email domain (e.g. '@pldt.com.ph') to restrict sign-up like SMART does.
-// Left empty for now so sign-up isn't blocked before that's confirmed.
 const REQUIRED_EMAIL_DOMAIN = '';
 
 async function handleSignup() {
-    const email = document.getElementById('signupEmail').value.trim().toLowerCase();
-    const pw = document.getElementById('signupPassword').value;
-    const pw2 = document.getElementById('signupPassword2').value;
+    const emailEl = document.getElementById('signupEmail');
+    const pwEl = document.getElementById('signupPassword');
+    const pw2El = document.getElementById('signupPassword2');
+    
+    const email = emailEl ? emailEl.value.trim().toLowerCase() : '';
+    const pw = pwEl ? pwEl.value : '';
+    const pw2 = pw2El ? pw2El.value : '';
 
     if (!email || !email.includes('@')) return showAuthMsg('signupMsg', 'Enter a valid work email.', false);
     if (REQUIRED_EMAIL_DOMAIN && !email.endsWith(REQUIRED_EMAIL_DOMAIN)) return showAuthMsg('signupMsg', `Please sign up using your ${REQUIRED_EMAIL_DOMAIN} work email.`, false);
@@ -134,7 +134,8 @@ async function handleSignup() {
     try {
         if (signupRole === 'team_leader' || signupRole === 'quality') {
             const requiredCode = signupRole === 'team_leader' ? TEAM_LEADER_INVITE_CODE : QUALITY_INVITE_CODE;
-            const code = document.getElementById('supervisorCode').value.trim();
+            const codeEl = document.getElementById('supervisorCode');
+            const code = codeEl ? codeEl.value.trim() : '';
             if (code !== requiredCode) return showAuthMsg('signupMsg', 'Invalid invite code.', false);
 
             let cred;
@@ -151,8 +152,6 @@ async function handleSignup() {
             return;
         }
 
-        // Agent path — account is created first (Firestore rules require being
-        // signed in to read the roster), then rolled back if there's no match.
         let cred;
         try {
             cred = await createUserWithEmailAndPassword(auth, email, pw);
@@ -179,7 +178,6 @@ async function handleSignup() {
             clearSignupForm();
             setTimeout(() => switchAuthTab('login'), 1200);
         } catch (err) {
-            // best-effort cleanup so a failed signup doesn't leave an orphaned auth account
             try { await deleteUser(cred.user); } catch (e2) {}
             showAuthMsg('signupMsg', friendlyAuthError(err), false);
         }
@@ -189,20 +187,17 @@ async function handleSignup() {
 }
 
 function clearSignupForm() {
-    document.getElementById('signupEmail').value = '';
-    document.getElementById('signupPassword').value = '';
-    document.getElementById('signupPassword2').value = '';
+    const email = document.getElementById('signupEmail');
+    const pw = document.getElementById('signupPassword');
+    const pw2 = document.getElementById('signupPassword2');
     const codeEl = document.getElementById('supervisorCode');
+
+    if (email) email.value = '';
+    if (pw) pw.value = '';
+    if (pw2) pw2.value = '';
     if (codeEl) codeEl.value = '';
 }
 
-/* ==========================================================================
-   TEMPORARY QUICK ACCESS
-   Creates (first time) or logs into real Firebase Auth accounts behind fixed
-   credentials — this is a convenience shortcut, not a security bypass.
-   Firestore rules are still fully enforced since these are genuine
-   authenticated sessions. Remove this block once real sign-ups are in use.
-   ========================================================================== */
 const QUICK_ACCESS_ACCOUNTS = {
     team_leader: { email: 'tl.quickaccess@pldtqamanagement.com', password: 'PLDT-Quick-2026!' },
     quality: { email: 'qa.quickaccess@pldtqamanagement.com', password: 'PLDT-Quick-2026!' }
@@ -238,8 +233,11 @@ async function quickAccess(role) {
 }
 
 async function handleLogin() {
-    const email = document.getElementById('loginEmail').value.trim().toLowerCase();
-    const pw = document.getElementById('loginPassword').value;
+    const emailEl = document.getElementById('loginEmail');
+    const pwEl = document.getElementById('loginPassword');
+    const email = emailEl ? emailEl.value.trim().toLowerCase() : '';
+    const pw = pwEl ? pwEl.value : '';
+
     if (!email || !pw) return showAuthMsg('loginMsg', 'Enter your email and password.', false);
 
     authFlowInProgress = true;
@@ -251,8 +249,8 @@ async function handleLogin() {
             return showAuthMsg('loginMsg', 'No profile found for this account. Contact your supervisor.', false);
         }
         currentSession = { uid: cred.user.uid, ...profileSnap.data() };
-        document.getElementById('loginEmail').value = '';
-        document.getElementById('loginPassword').value = '';
+        if (emailEl) emailEl.value = '';
+        if (pwEl) pwEl.value = '';
         await enterApp();
     } catch (err) {
         showAuthMsg('loginMsg', friendlyAuthError(err), false);
@@ -262,7 +260,7 @@ async function handleLogin() {
 }
 
 function logout() {
-    signOut(auth); // onAuthStateChanged below handles the UI reset
+    signOut(auth);
 }
 
 function friendlyAuthError(err) {
@@ -274,33 +272,44 @@ function friendlyAuthError(err) {
     return 'Something went wrong: ' + (err && err.message ? err.message : 'please try again.');
 }
 
-/* Resets every piece of UI/state that could otherwise leak between two
-   different people using the same browser/station one after another. */
 function resetToLoggedOutState() {
     currentSession = null;
     cachedAuditRows = [];
-    document.getElementById('appScreen').style.display = 'none';
-    document.getElementById('authScreen').style.display = 'flex';
-    document.getElementById('sessionChip').style.display = 'none';
-    document.getElementById('loginEmail').value = '';
-    document.getElementById('loginPassword').value = '';
-    document.getElementById('loginMsg').className = 'auth-msg';
+
+    const appScreen = document.getElementById('appScreen');
+    const authScreen = document.getElementById('authScreen');
+    const sessionChip = document.getElementById('sessionChip');
+    const loginEmail = document.getElementById('loginEmail');
+    const loginPassword = document.getElementById('loginPassword');
+    const loginMsg = document.getElementById('loginMsg');
+
+    if (appScreen) appScreen.style.display = 'none';
+    if (authScreen) authScreen.style.display = 'flex';
+    if (sessionChip) sessionChip.style.display = 'none';
+    if (loginEmail) loginEmail.value = '';
+    if (loginPassword) loginPassword.value = '';
+    if (loginMsg) loginMsg.className = 'auth-msg';
+
     clearSignupForm();
     switchAuthTab('login');
 
-    // clear anything the previous person's session had rendered
-    document.getElementById('agentAuditList').innerHTML = '';
-    document.getElementById('agentScorecard').innerHTML = '';
-    document.getElementById('agentWelcomeName').textContent = 'Welcome';
-    document.getElementById('rosterStatus').textContent = 'No roster loaded yet.';
-    document.getElementById('dataStatus').textContent = 'No audit data loaded yet.';
-    document.getElementById('resyncStatus').textContent = 'Use this if agents uploaded/updated after data was already loaded, or if an agent can\u2019t see rows that should be theirs.';
-    document.getElementById('uploadPopover').style.display = 'none';
+    const agentAuditList = document.getElementById('agentAuditList');
+    const agentScorecard = document.getElementById('agentScorecard');
+    const agentWelcomeName = document.getElementById('agentWelcomeName');
+    const rosterStatus = document.getElementById('rosterStatus');
+    const dataStatus = document.getElementById('dataStatus');
+    const resyncStatus = document.getElementById('resyncStatus');
+    const uploadPopover = document.getElementById('uploadPopover');
+
+    if (agentAuditList) agentAuditList.innerHTML = '';
+    if (agentScorecard) agentScorecard.innerHTML = '';
+    if (agentWelcomeName) agentWelcomeName.textContent = 'Welcome';
+    if (rosterStatus) rosterStatus.textContent = 'No roster loaded yet.';
+    if (dataStatus) dataStatus.textContent = 'No audit data loaded yet.';
+    if (resyncStatus) resyncStatus.textContent = 'Use this if agents uploaded/updated after data was already loaded, or if an agent can\u2019t see rows that should be theirs.';
+    if (uploadPopover) uploadPopover.style.display = 'none';
 }
 
-/* Fires on page load (if a session persisted) and after every sign-in/out —
-   except while handleSignup/handleLogin are already driving the UI
-   themselves (see authFlowInProgress above). */
 onAuthStateChanged(auth, async (user) => {
     if (authFlowInProgress) return;
 
@@ -319,27 +328,39 @@ onAuthStateChanged(auth, async (user) => {
 });
 
 async function enterApp() {
-    document.getElementById('authScreen').style.display = 'none';
-    document.getElementById('appScreen').style.display = 'flex';
-    document.getElementById('sessionChip').style.display = 'flex';
+    const appScreen = document.getElementById('appScreen');
+    const authScreen = document.getElementById('authScreen');
+    const sessionChip = document.getElementById('sessionChip');
+    const sessionLabel = document.getElementById('sessionLabel');
+
+    if (authScreen) authScreen.style.display = 'none';
+    if (appScreen) appScreen.style.display = 'flex';
+    if (sessionChip) sessionChip.style.display = 'flex';
 
     const roleLabels = { quality: '👤 Quality · ', team_leader: '👤 Team Leader · ', supervisor: '👤 Quality · ', agent: '👤 Agent · ' };
-    document.getElementById('sessionLabel').textContent = (roleLabels[currentSession.role] || '👤 ') + currentSession.email;
+    if (sessionLabel) {
+        sessionLabel.textContent = (roleLabels[currentSession.role] || '👤 ') + currentSession.email;
+    }
 
-    // 'supervisor' kept as a legacy alias for 'quality' (full access) in case any older accounts still have that role
     const canViewDashboard = currentSession.role === 'quality' || currentSession.role === 'team_leader' || currentSession.role === 'supervisor';
     const canUpload = currentSession.role === 'quality' || currentSession.role === 'supervisor';
 
-    document.getElementById('supervisorSidebar').style.display = canViewDashboard ? 'flex' : 'none';
-    document.getElementById('supervisorView').style.display = canViewDashboard ? 'flex' : 'none';
-    document.getElementById('agentView').style.display = canViewDashboard ? 'none' : 'flex';
-    document.getElementById('uploadIconBtn').style.display = canUpload ? 'flex' : 'none';
+    const supervisorSidebar = document.getElementById('supervisorSidebar');
+    const supervisorView = document.getElementById('supervisorView');
+    const agentView = document.getElementById('agentView');
+    const uploadIconBtn = document.getElementById('uploadIconBtn');
+
+    if (supervisorSidebar) supervisorSidebar.style.display = canViewDashboard ? 'flex' : 'none';
+    if (supervisorView) supervisorView.style.display = canViewDashboard ? 'flex' : 'none';
+    if (agentView) agentView.style.display = canViewDashboard ? 'none' : 'flex';
+    if (uploadIconBtn) uploadIconBtn.style.display = canUpload ? 'flex' : 'none';
 
     if (canViewDashboard) {
         if (canUpload) await refreshRosterStatus();
         const rows = await loadAllAuditData();
         if (rows.length) {
-            if (canUpload) document.getElementById('dataStatus').innerHTML = `✅ ${rows.length} audit rows loaded.`;
+            const dataStatus = document.getElementById('dataStatus');
+            if (canUpload && dataStatus) dataStatus.innerHTML = `✅ ${rows.length} audit rows loaded.`;
             populateDropdownOptions(rows);
             filterData();
         }
@@ -350,7 +371,6 @@ async function enterApp() {
 
 /* ==========================================================================
    HIT-PARAMETER CONFIG
-   Maps raw audit columns to plain-language "what was flagged" descriptions.
    ========================================================================== */
 const NON_ISSUE_VALUES = new Set(['', 'NO OPPORTUNITY', 'NA', 'N/A', 'NO', 'NONE']);
 
@@ -385,7 +405,6 @@ function normVal(v) {
     return (v === undefined || v === null) ? '' : String(v).trim().toUpperCase();
 }
 
-/* Forgiving name comparison for matching roster entries to raw-data rows. */
 function normalizeName(str) {
     return String(str || '')
         .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -417,7 +436,7 @@ function getRowIssues(row) {
 }
 
 /* ==========================================================================
-   FILE PARSING (SheetJS handles both CSV and XLSX)
+   FILE PARSING
    ========================================================================== */
 function parseWorkbookFile(file, preferSheetKeywords = []) {
     return new Promise((resolve, reject) => {
@@ -452,12 +471,10 @@ function findHeader(row, candidates) {
     if (!row) return null;
     const keys = Object.keys(row);
     
-    // Strict exact match
     for (const cand of candidates) {
         const hit = keys.find(k => k.trim().toLowerCase() === cand.trim().toLowerCase());
         if (hit) return hit;
     }
-    // Partial substring match
     for (const cand of candidates) {
         const hit = keys.find(k => k.trim().toLowerCase().includes(cand.trim().toLowerCase()));
         if (hit) return hit;
@@ -471,10 +488,10 @@ function findHeader(row, candidates) {
 async function handleRosterUpload(event) {
     const file = event.target.files[0];
     if (!file) return;
-    document.getElementById('rosterStatus').textContent = 'Processing ' + file.name + '...';
+    const rosterStatus = document.getElementById('rosterStatus');
+    if (rosterStatus) rosterStatus.textContent = 'Processing ' + file.name + '...';
 
     try {
-        // Look for sheets named 'ROSTER', 'DOMAIN', 'MASTER', or default to sheet 1
         const rows = await parseWorkbookFile(file, ['ROSTER', 'DOMAIN', 'MASTER']);
         if (!rows.length) throw new Error('empty');
 
@@ -490,8 +507,6 @@ async function handleRosterUpload(event) {
         ]);
 
         if (!emailKey || !nameKey) {
-            console.warn('Roster column detection failed. Email column found:', emailKey, '| Name column found:', nameKey);
-            console.log('Actual column headers in parsed sheet:', JSON.stringify(Object.keys(rows[0])));
             throw new Error('missing columns');
         }
 
@@ -506,24 +521,24 @@ async function handleRosterUpload(event) {
         await clearCollection('roster');
         await batchWriteDocs('roster', roster, (r) => r.email);
 
-        document.getElementById('rosterStatus').innerHTML = `✅ Roster loaded: ${roster.length} agents matched to emails.`;
+        if (rosterStatus) rosterStatus.innerHTML = `✅ Roster loaded: ${roster.length} agents matched to emails.`;
     } catch (err) {
         console.error(err);
-        document.getElementById('rosterStatus').innerHTML =
-            `⚠️ Could not read roster — check browser console (F12) for details.`;
+        if (rosterStatus) rosterStatus.innerHTML = `⚠️ Could not read roster — check browser console for details.`;
     }
 }
 
 async function refreshRosterStatus() {
     const snap = await getDocs(collection(db, 'roster'));
-    if (snap.size) {
-        document.getElementById('rosterStatus').innerHTML = `✅ Roster loaded: ${snap.size} agents.`;
+    const rosterStatus = document.getElementById('rosterStatus');
+    if (snap.size && rosterStatus) {
+        rosterStatus.innerHTML = `✅ Roster loaded: ${snap.size} agents.`;
     }
 }
 
 async function resyncAgentEmails() {
     const statusEl = document.getElementById('resyncStatus');
-    statusEl.textContent = 'Re-syncing...';
+    if (statusEl) statusEl.textContent = 'Re-syncing...';
 
     try {
         const rosterSnap = await getDocs(collection(db, 'roster'));
@@ -555,13 +570,12 @@ async function resyncAgentEmails() {
         let msg = `✅ Re-synced: ${matched} rows matched to a roster email, ${unmatched} rows still unmatched (${unmatchedNames.size} distinct agent name(s)).`;
         if (unmatchedNames.size) {
             const list = [...unmatchedNames];
-            msg += ` First few: ${list.slice(0, 6).join(' | ')}${list.length > 6 ? ' …' : ''} — full list logged to console.`;
-            console.warn('Unmatched agent names (not found on roster):', list);
+            msg += ` First few: ${list.slice(0, 6).join(' | ')}${list.length > 6 ? ' …' : ''}`;
         }
-        statusEl.textContent = msg;
+        if (statusEl) statusEl.textContent = msg;
     } catch (err) {
         console.error(err);
-        statusEl.textContent = '⚠️ Re-sync failed: ' + (err && err.message ? err.message : 'unknown error');
+        if (statusEl) statusEl.textContent = '⚠️ Re-sync failed: ' + (err && err.message ? err.message : 'unknown error');
     }
 }
 
@@ -579,7 +593,8 @@ const NEEDED_FIELDS = [
 async function handleDataUpload(event) {
     const file = event.target.files[0];
     if (!file) return;
-    document.getElementById('dataStatus').textContent = 'Processing ' + file.name + '...';
+    const dataStatus = document.getElementById('dataStatus');
+    if (dataStatus) dataStatus.textContent = 'Processing ' + file.name + '...';
 
     try {
         const rows = await parseWorkbookFile(file, ['RAW', 'DATA']);
@@ -592,10 +607,6 @@ async function handleDataUpload(event) {
         });
 
         const missingFields = NEEDED_FIELDS.filter(f => !headerMap[f]);
-        if (missingFields.length) {
-            console.warn('Columns not found in uploaded file:', missingFields);
-            console.log('Actual column headers in uploaded file:', JSON.stringify(Object.keys(rows[0])));
-        }
 
         const rosterSnap = await getDocs(collection(db, 'roster'));
         const nameToEmail = {};
@@ -638,21 +649,20 @@ async function handleDataUpload(event) {
         await replaceAuditData(deduped);
 
         cachedAuditRows = deduped;
-        let msg = `✅ ${deduped.length} audit rows loaded${dupCount ? ` (${dupCount} exact duplicate row${dupCount === 1 ? '' : 's'} removed)` : ''}.`;
-        if (missingFields.length) {
-            msg += ` ⚠️ ${missingFields.length} expected column(s) missing — check console for details.`;
-        }
-        document.getElementById('dataStatus').innerHTML = msg;
+        let msg = `✅ ${deduped.length} audit rows loaded${dupCount ? ` (${dupCount} duplicate(s) removed)` : ''}.`;
+        if (missingFields.length) msg += ` ⚠️ ${missingFields.length} expected column(s) missing.`;
+        
+        if (dataStatus) dataStatus.innerHTML = msg;
         populateDropdownOptions(trimmed);
         filterData();
     } catch (err) {
         console.error(err);
-        document.getElementById('dataStatus').innerHTML = `⚠️ Could not read file. Check expected audit columns.`;
+        if (dataStatus) dataStatus.innerHTML = `⚠️ Could not read file. Check expected audit columns.`;
     }
 }
 
 /* ==========================================================================
-   SUPERVISOR DASHBOARD — FILTERS + RENDER
+   SUPERVISOR DASHBOARD
    ========================================================================== */
 function populateDropdownOptions(rows) {
     const map = {
@@ -665,6 +675,7 @@ function populateDropdownOptions(rows) {
     };
     Object.entries(map).forEach(([selId, field]) => {
         const sel = document.getElementById(selId);
+        if (!sel) return;
         const current = sel.value;
         const uniques = [...new Set(rows.map(r => r[field]).filter(Boolean))].sort();
         sel.innerHTML = `<option value="ALL">(All)</option>` + uniques.map(v => `<option value="${v}">${v}</option>`).join('');
@@ -682,12 +693,15 @@ async function loadAllAuditData() {
 
 function toggleUploadPanel() {
     const panel = document.getElementById('uploadPopover');
-    panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
+    if (panel) panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
 }
 
 function resetFilters() {
     ['selectFormType', 'selectBrand', 'selectMonth', 'selectWeekending', 'selectTenure', 'selectTeamLeader']
-        .forEach(id => { document.getElementById(id).value = 'ALL'; });
+        .forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.value = 'ALL';
+        });
     filterData();
 }
 
@@ -695,13 +709,18 @@ function filterData() {
     const rows = cachedAuditRows;
     if (!rows.length) return;
 
+    const getValue = (id) => {
+        const el = document.getElementById(id);
+        return el ? el.value : 'ALL';
+    };
+
     const f = {
-        formType: document.getElementById('selectFormType').value,
-        brand: document.getElementById('selectBrand').value,
-        month: document.getElementById('selectMonth').value,
-        weekending: document.getElementById('selectWeekending').value,
-        tenure: document.getElementById('selectTenure').value,
-        teamLeader: document.getElementById('selectTeamLeader').value
+        formType: getValue('selectFormType'),
+        brand: getValue('selectBrand'),
+        month: getValue('selectMonth'),
+        weekending: getValue('selectWeekending'),
+        tenure: getValue('selectTenure'),
+        teamLeader: getValue('selectTeamLeader')
     };
 
     const filtered = rows.filter(r =>
@@ -724,15 +743,24 @@ function tenureBucket(tenureStr) {
 }
 
 function renderSupervisorDashboard(data) {
+    const totalPassRateVal = document.getElementById('totalPassRateVal');
+    const totalFailRateVal = document.getElementById('totalFailRateVal');
+    const cmSuperstarVal = document.getElementById('cmSuperstarVal');
+    const cmUnderperformerVal = document.getElementById('cmUnderperformerVal');
+    const leaderChart = document.getElementById('leaderChart');
+    const parameterChart = document.getElementById('parameterChart');
+    const topHitsTable = document.getElementById('topHitsTable');
+    const clusterDistTable = document.getElementById('clusterDistTable');
+
     if (!data.length) {
-        document.getElementById('totalPassRateVal').textContent = '-';
-        document.getElementById('totalFailRateVal').textContent = '-';
-        document.getElementById('cmSuperstarVal').textContent = '-';
-        document.getElementById('cmUnderperformerVal').textContent = '-';
-        document.getElementById('leaderChart').innerHTML = '<div class="empty-note">No matching data.</div>';
-        document.getElementById('parameterChart').innerHTML = '<div class="empty-note">No matching data.</div>';
-        document.getElementById('topHitsTable').querySelector('tbody').innerHTML = '<tr><td colspan="3" class="empty-note">No matching data.</td></tr>';
-        document.getElementById('clusterDistTable').querySelector('tbody').innerHTML = '<tr><td colspan="7" class="empty-note">No matching data.</td></tr>';
+        if (totalPassRateVal) totalPassRateVal.textContent = '-';
+        if (totalFailRateVal) totalFailRateVal.textContent = '-';
+        if (cmSuperstarVal) cmSuperstarVal.textContent = '-';
+        if (cmUnderperformerVal) cmUnderperformerVal.textContent = '-';
+        if (leaderChart) leaderChart.innerHTML = '<div class="empty-note">No matching data.</div>';
+        if (parameterChart) parameterChart.innerHTML = '<div class="empty-note">No matching data.</div>';
+        if (topHitsTable) topHitsTable.querySelector('tbody').innerHTML = '<tr><td colspan="3" class="empty-note">No matching data.</td></tr>';
+        if (clusterDistTable) clusterDistTable.querySelector('tbody').innerHTML = '<tr><td colspan="7" class="empty-note">No matching data.</td></tr>';
         return;
     }
 
@@ -756,25 +784,28 @@ function renderSupervisorDashboard(data) {
     });
 
     const lobColors = ['#C8102E', '#7a0f1e', '#1a1a1a', '#6b6b6b', '#f0c4c9', '#d9534f', '#0275d8'];
-    const parameterChart = document.getElementById('parameterChart');
     const lobNames = Object.keys(lobScores).sort();
-    parameterChart.innerHTML = lobNames.length
-        ? lobNames.map((lob, i) => {
-            const s = lobScores[lob];
-            const a = s.count ? Math.round(s.total / s.count) : 0;
-            return `<div class="bar-wrapper">
-                <div class="bar-value">${a}%</div>
-                <div class="bar" style="background:${lobColors[i % lobColors.length]};height:${a}%;"></div>
-                <div class="bar-label">${escapeHtml(lob)}</div>
-            </div>`;
-        }).join('')
-        : '<div class="empty-note">No matching data.</div>';
+
+    if (parameterChart) {
+        parameterChart.innerHTML = lobNames.length
+            ? lobNames.map((lob, i) => {
+                const s = lobScores[lob];
+                const a = s.count ? Math.round(s.total / s.count) : 0;
+                return `<div class="bar-wrapper">
+                    <div class="bar-value">${a}%</div>
+                    <div class="bar" style="background:${lobColors[i % lobColors.length]};height:${a}%;"></div>
+                    <div class="bar-label">${escapeHtml(lob)}</div>
+                </div>`;
+            }).join('')
+            : '<div class="empty-note">No matching data.</div>';
+    }
 
     const isPassed = (r) => r['OVERALL PASSRATE'] ? r['OVERALL PASSRATE'] === 'PASSED' : (r['OVERALL SCORE'] || 0) >= 85;
     const passed = data.filter(isPassed).length;
     const passPct = Math.round((passed / data.length) * 100);
-    document.getElementById('totalPassRateVal').textContent = passPct + '%';
-    document.getElementById('totalFailRateVal').textContent = (100 - passPct) + '%';
+
+    if (totalPassRateVal) totalPassRateVal.textContent = passPct + '%';
+    if (totalFailRateVal) totalFailRateVal.textContent = (100 - passPct) + '%';
 
     const buckets = { b1: [], b2: [], b3: [] };
     data.forEach(r => buckets[tenureBucket(r['AGENT TENURE'])].push(r));
@@ -782,23 +813,25 @@ function renderSupervisorDashboard(data) {
         const vals = arr.map(r => r['OVERALL SCORE']).filter(v => v !== null && v !== undefined && !isNaN(v));
         return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) + '%' : '-';
     };
-    document.getElementById('totalAuditNhip').textContent = buckets.b1.length || '-';
-    document.getElementById('totalAudit31').textContent = buckets.b2.length || '-';
-    document.getElementById('totalAudit91').textContent = buckets.b3.length || '-';
-    document.getElementById('totalAuditTotal').textContent = data.length;
-    document.getElementById('totalAvgNhip').textContent = bucketAvg(buckets.b1);
-    document.getElementById('totalAvg31').textContent = bucketAvg(buckets.b2);
-    document.getElementById('totalAvg91').textContent = bucketAvg(buckets.b3);
-    document.getElementById('totalAvgTotal').textContent = avgOverall === null ? '-' : avgOverall + '%';
+
+    const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    setText('totalAuditNhip', buckets.b1.length || '-');
+    setText('totalAudit31', buckets.b2.length || '-');
+    setText('totalAudit91', buckets.b3.length || '-');
+    setText('totalAuditTotal', data.length);
+    setText('totalAvgNhip', bucketAvg(buckets.b1));
+    setText('totalAvg31', bucketAvg(buckets.b2));
+    setText('totalAvg91', bucketAvg(buckets.b3));
+    setText('totalAvgTotal', avgOverall === null ? '-' : avgOverall + '%');
 
     const cmRows = data.filter(r => r['CM']);
     if (cmRows.length) {
         const superstar = cmRows.filter(r => r['CM'] === 'SUPERSTAR').length;
-        document.getElementById('cmSuperstarVal').textContent = Math.round((superstar / cmRows.length) * 100) + '%';
-        document.getElementById('cmUnderperformerVal').textContent = Math.round(((cmRows.length - superstar) / cmRows.length) * 100) + '%';
+        if (cmSuperstarVal) cmSuperstarVal.textContent = Math.round((superstar / cmRows.length) * 100) + '%';
+        if (cmUnderperformerVal) cmUnderperformerVal.textContent = Math.round(((cmRows.length - superstar) / cmRows.length) * 100) + '%';
     } else {
-        document.getElementById('cmSuperstarVal').textContent = '-';
-        document.getElementById('cmUnderperformerVal').textContent = '-';
+        if (cmSuperstarVal) cmSuperstarVal.textContent = '-';
+        if (cmUnderperformerVal) cmUnderperformerVal.textContent = '-';
     }
 
     const tlScores = {};
@@ -807,14 +840,16 @@ function renderSupervisorDashboard(data) {
         if (!tlScores[tl]) tlScores[tl] = { total: 0, count: 0 };
         if (r['OVERALL SCORE'] !== null) { tlScores[tl].total += r['OVERALL SCORE']; tlScores[tl].count++; }
     });
-    const leaderChart = document.getElementById('leaderChart');
-    leaderChart.innerHTML = Object.entries(tlScores).map(([tl, s]) => {
-        const a = s.count ? Math.round(s.total / s.count) : 0;
-        return `<div class="horizontal-bar-row">
-            <div class="horizontal-label" title="${tl}">${tl}</div>
-            <div class="horizontal-bar-container"><div class="horizontal-bar-fill" style="width:${a}%;">${a}%</div></div>
-        </div>`;
-    }).join('') || '<div class="empty-note">No matching data.</div>';
+
+    if (leaderChart) {
+        leaderChart.innerHTML = Object.entries(tlScores).map(([tl, s]) => {
+            const a = s.count ? Math.round(s.total / s.count) : 0;
+            return `<div class="horizontal-bar-row">
+                <div class="horizontal-label" title="${tl}">${tl}</div>
+                <div class="horizontal-bar-container"><div class="horizontal-bar-fill" style="width:${a}%;">${a}%</div></div>
+            </div>`;
+        }).join('') || '<div class="empty-note">No matching data.</div>';
+    }
 
     const hitCounts = {};
     data.forEach(r => {
@@ -824,13 +859,18 @@ function renderSupervisorDashboard(data) {
         });
     });
     const sortedHits = Object.entries(hitCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
-    const tbody = document.getElementById('topHitsTable').querySelector('tbody');
-    tbody.innerHTML = sortedHits.length
-        ? sortedHits.map(([key, count]) => {
-            const [label, category] = key.split('||');
-            return `<tr><td style="text-align:left;">${label}</td><td>${category}</td><td>${count}</td></tr>`;
-        }).join('')
-        : '<tr><td colspan="3" class="empty-note">No parameters flagged in this selection.</td></tr>';
+    
+    if (topHitsTable) {
+        const tbody = topHitsTable.querySelector('tbody');
+        if (tbody) {
+            tbody.innerHTML = sortedHits.length
+                ? sortedHits.map(([key, count]) => {
+                    const [label, category] = key.split('||');
+                    return `<tr><td style="text-align:left;">${label}</td><td>${category}</td><td>${count}</td></tr>`;
+                }).join('')
+                : '<tr><td colspan="3" class="empty-note">No parameters flagged in this selection.</td></tr>';
+        }
+    }
 
     const distBuckets = [
         { label: '90–100%', test: s => s >= 90 },
@@ -847,40 +887,50 @@ function renderSupervisorDashboard(data) {
         clusterRows[c].push(r['OVERALL SCORE']);
     });
 
-    const clusterDistBody = document.getElementById('clusterDistTable').querySelector('tbody');
-    const clusterNames = Object.keys(clusterRows).sort();
-    clusterDistBody.innerHTML = clusterNames.length
-        ? clusterNames.map(c => {
-            const scores = clusterRows[c];
-            const total = scores.length;
-            const pctCells = distBuckets.map(b => {
-                const count = scores.filter(b.test).length;
-                const pct = total ? Math.round((count / total) * 100) : 0;
-                return `<td>${pct}%</td>`;
-            }).join('');
-            return `<tr><td style="font-weight:bold;">${c}</td>${pctCells}<td>${total}</td></tr>`;
-        }).join('')
-        : '<tr><td colspan="7" class="empty-note">No matching data.</td></tr>';
+    if (clusterDistTable) {
+        const clusterDistBody = clusterDistTable.querySelector('tbody');
+        const clusterNames = Object.keys(clusterRows).sort();
+        if (clusterDistBody) {
+            clusterDistBody.innerHTML = clusterNames.length
+                ? clusterNames.map(c => {
+                    const scores = clusterRows[c];
+                    const total = scores.length;
+                    const pctCells = distBuckets.map(b => {
+                        const count = scores.filter(b.test).length;
+                        const pct = total ? Math.round((count / total) * 100) : 0;
+                        return `<td>${pct}%</td>`;
+                    }).join('');
+                    return `<tr><td style="font-weight:bold;">${c}</td>${pctCells}<td>${total}</td></tr>`;
+                }).join('')
+                : '<tr><td colspan="7" class="empty-note">No matching data.</td></tr>';
+        }
+    }
 }
 
 /* ==========================================================================
    AGENT VIEW
    ========================================================================== */
 async function renderAgentView() {
-    document.getElementById('agentWelcomeName').textContent = 'Welcome, ' + (currentSession.agentName || currentSession.email);
+    const welcomeName = document.getElementById('agentWelcomeName');
+    if (welcomeName) {
+        welcomeName.textContent = 'Welcome, ' + (currentSession.agentName || currentSession.email);
+    }
 
     const q = query(collection(db, 'auditData'), where('agentEmailLower', '==', currentSession.email));
     const snap = await getDocs(q);
     const myRows = snap.docs.map(d => d.data());
 
+    const emptyState = document.getElementById('agentEmptyState');
+    const agentContent = document.getElementById('agentContent');
+
     if (!myRows.length) {
-        document.getElementById('agentEmptyState').style.display = 'block';
-        document.getElementById('agentContent').style.display = 'none';
+        if (emptyState) emptyState.style.display = 'block';
+        if (agentContent) agentContent.style.display = 'none';
         return;
     }
 
-    document.getElementById('agentEmptyState').style.display = 'none';
-    document.getElementById('agentContent').style.display = 'flex';
+    if (emptyState) emptyState.style.display = 'none';
+    if (agentContent) agentContent.style.display = 'flex';
 
     const avg = (key) => {
         const vals = myRows.map(r => r[key]).filter(v => v !== null && v !== undefined && !isNaN(v));
@@ -894,9 +944,13 @@ async function renderAgentView() {
         { label: 'Safe & Secure', val: avg('SAFE & SECURE') },
         { label: 'Overall Score', val: avg('OVERALL SCORE') }
     ];
-    document.getElementById('agentScorecard').innerHTML = tiles.map(t =>
-        `<div class="score-tile"><div class="num">${t.val === null ? '-' : t.val + '%'}</div><div class="lbl">${t.label}</div></div>`
-    ).join('');
+
+    const scorecard = document.getElementById('agentScorecard');
+    if (scorecard) {
+        scorecard.innerHTML = tiles.map(t =>
+            `<div class="score-tile"><div class="num">${t.val === null ? '-' : t.val + '%'}</div><div class="lbl">${t.label}</div></div>`
+        ).join('');
+    }
 
     const sorted = [...myRows].sort((a, b) => String(b['WEEKENDING'] || '').localeCompare(String(a['WEEKENDING'] || '')));
 
@@ -939,20 +993,23 @@ async function renderAgentView() {
         return bMax.localeCompare(aMax);
     });
 
-    document.getElementById('agentAuditList').innerHTML = orderedMonths.map((month, idx) => {
-        const rows = groups[month];
-        const monthAvg = (() => {
-            const vals = rows.map(r => r['OVERALL SCORE']).filter(v => v !== null && v !== undefined && !isNaN(v));
-            return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
-        })();
-        return `<details class="month-group" ${idx === 0 ? 'open' : ''}>
-            <summary class="month-summary">
-                <span>${month} <span class="month-count">(${rows.length} audit${rows.length === 1 ? '' : 's'})</span></span>
-                <span class="month-avg">${monthAvg === null ? '' : 'avg ' + monthAvg + '%'}</span>
-            </summary>
-            <div class="month-body">${rows.map(auditRowHtml).join('')}</div>
-        </details>`;
-    }).join('');
+    const agentAuditList = document.getElementById('agentAuditList');
+    if (agentAuditList) {
+        agentAuditList.innerHTML = orderedMonths.map((month, idx) => {
+            const rows = groups[month];
+            const monthAvg = (() => {
+                const vals = rows.map(r => r['OVERALL SCORE']).filter(v => v !== null && v !== undefined && !isNaN(v));
+                return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
+            })();
+            return `<details class="month-group" ${idx === 0 ? 'open' : ''}>
+                <summary class="month-summary">
+                    <span>${month} <span class="month-count">(${rows.length} audit${rows.length === 1 ? '' : 's'})</span></span>
+                    <span class="month-avg">${monthAvg === null ? '' : 'avg ' + monthAvg + '%'}</span>
+                </summary>
+                <div class="month-body">${rows.map(auditRowHtml).join('')}</div>
+            </details>`;
+        }).join('');
+    }
 }
 
 /* ==========================================================================
