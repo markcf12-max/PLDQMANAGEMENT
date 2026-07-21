@@ -14,54 +14,66 @@ import {
     collection, query, where, getDocs, writeBatch
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
-const TEAM_LEADER_INVITE_CODE = 'PLDT-TL-2026'; // client-side only — fine for a prototype, replace with a Cloud Function check before real use
-const QUALITY_INVITE_CODE = 'PLDT-QA-2026'; // client-side only — same caveat as above
+const TEAM_LEADER_INVITE_CODE = 'PLDT-TL-2026'; // Note: Client-side invite codes are fine for prototypes, move to Cloud Functions for strict security
+const QUALITY_INVITE_CODE = 'PLDT-QA-2026'; 
 
-/* Firestore write batches max out at 500 ops — chunk anything bigger */
+/* Firestore write batches max out at 500 ops — chunk and run concurrently */
 async function batchWriteDocs(collectionName, docs, idFn) {
     const chunks = [];
     for (let i = 0; i < docs.length; i += 400) chunks.push(docs.slice(i, i + 400));
-    for (const chunk of chunks) {
+    
+    const promises = chunks.map(chunk => {
         const batch = writeBatch(db);
         chunk.forEach(d => {
             const ref = idFn ? doc(db, collectionName, idFn(d)) : doc(collection(db, collectionName));
             batch.set(ref, d);
         });
-        await batch.commit();
-    }
+        return batch.commit();
+    });
+
+    await Promise.all(promises);
 }
 
 async function clearCollection(collectionName) {
     const snap = await getDocs(collection(db, collectionName));
     const ids = snap.docs.map(d => d.id);
+    const promises = [];
+
     for (let i = 0; i < ids.length; i += 400) {
         const chunk = ids.slice(i, i + 400);
         const batch = writeBatch(db);
         chunk.forEach(id => batch.delete(doc(db, collectionName, id)));
-        await batch.commit();
+        promises.push(batch.commit());
     }
+
+    await Promise.all(promises);
 }
 
-/* Replaces the entire auditData collection using predictable IDs (row_0,
-   row_1, ...) tracked via a small metadata doc. */
+/* Replaces the entire auditData collection using predictable IDs (row_0, row_1, ...) */
 async function replaceAuditData(rows) {
     const metaRef = doc(db, 'meta', 'auditData');
     const metaSnap = await getDoc(metaRef);
     const prevCount = metaSnap.exists() ? (metaSnap.data().count || 0) : 0;
 
+    // Concurrent Deletion
+    const deletePromises = [];
     for (let i = 0; i < prevCount; i += 400) {
         const end = Math.min(i + 400, prevCount);
         const batch = writeBatch(db);
         for (let j = i; j < end; j++) batch.delete(doc(db, 'auditData', 'row_' + j));
-        await batch.commit();
+        deletePromises.push(batch.commit());
     }
+    await Promise.all(deletePromises);
 
+    // Concurrent Insertion
+    const setPromises = [];
     for (let i = 0; i < rows.length; i += 400) {
         const chunk = rows.slice(i, i + 400);
         const batch = writeBatch(db);
         chunk.forEach((row, idx) => batch.set(doc(db, 'auditData', 'row_' + (i + idx)), row));
-        await batch.commit();
+        setPromises.push(batch.commit());
     }
+    await Promise.all(setPromises);
 
     await setDoc(metaRef, { count: rows.length, updatedAt: Date.now() });
 }
@@ -198,30 +210,20 @@ function clearSignupForm() {
     if (codeEl) codeEl.value = '';
 }
 
-const QUICK_ACCESS_ACCOUNTS = {
-    team_leader: { email: 'tl.quickaccess@pldtqamanagement.com', password: 'PLDT-Quick-2026!' },
-    quality: { email: 'qa.quickaccess@pldtqamanagement.com', password: 'PLDT-Quick-2026!' }
-};
-
+/* Quick access now prompts for standard credentials instead of exposing hardcoded passwords */
 async function quickAccess(role) {
-    const { email, password } = QUICK_ACCESS_ACCOUNTS[role];
+    const email = prompt(`Enter ${role.replace('_', ' ')} email:`);
+    const password = prompt("Enter password:");
+
+    if (!email || !password) return;
+
     authFlowInProgress = true;
     try {
-        let cred;
-        try {
-            cred = await signInWithEmailAndPassword(auth, email, password);
-        } catch (err) {
-            if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
-                cred = await createUserWithEmailAndPassword(auth, email, password);
-                await setDoc(doc(db, 'users', cred.user.uid), { email, role });
-            } else {
-                throw err;
-            }
-        }
+        const cred = await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
         let profileSnap = await getDoc(doc(db, 'users', cred.user.uid));
+        
         if (!profileSnap.exists()) {
-            await setDoc(doc(db, 'users', cred.user.uid), { email, role });
-            profileSnap = await getDoc(doc(db, 'users', cred.user.uid));
+            return showAuthMsg('loginMsg', 'No user role found for this login.', false);
         }
         currentSession = { uid: cred.user.uid, ...profileSnap.data() };
         await enterApp();
@@ -306,7 +308,7 @@ function resetToLoggedOutState() {
     if (agentWelcomeName) agentWelcomeName.textContent = 'Welcome';
     if (rosterStatus) rosterStatus.textContent = 'No roster loaded yet.';
     if (dataStatus) dataStatus.textContent = 'No audit data loaded yet.';
-    if (resyncStatus) resyncStatus.textContent = 'Use this if agents uploaded/updated after data was already loaded, or if an agent can\u2019t see rows that should be theirs.';
+    if (resyncStatus) resyncStatus.textContent = 'Use this if agents uploaded/updated after data was already loaded, or if an agent can’t see rows that should be theirs.';
     if (uploadPopover) uploadPopover.style.display = 'none';
 }
 
@@ -554,6 +556,7 @@ async function resyncAgentEmails() {
         let matched = 0, unmatched = 0;
         const unmatchedNames = new Set();
 
+        const promises = [];
         for (let i = 0; i < docs.length; i += 400) {
             const chunk = docs.slice(i, i + 400);
             const batch = writeBatch(db);
@@ -564,8 +567,9 @@ async function resyncAgentEmails() {
                 if (email) matched++; else { unmatched++; if (key) unmatchedNames.add(row['AGENT/OFFICER NAME']); }
                 batch.update(doc(db, 'auditData', d.id), { agentEmailLower: email });
             });
-            await batch.commit();
+            promises.push(batch.commit());
         }
+        await Promise.all(promises);
 
         let msg = `✅ Re-synced: ${matched} rows matched to a roster email, ${unmatched} rows still unmatched (${unmatchedNames.size} distinct agent name(s)).`;
         if (unmatchedNames.size) {
@@ -752,6 +756,9 @@ function renderSupervisorDashboard(data) {
     const topHitsTable = document.getElementById('topHitsTable');
     const clusterDistTable = document.getElementById('clusterDistTable');
 
+    const topHitsBody = topHitsTable ? (topHitsTable.querySelector('tbody') || topHitsTable) : null;
+    const clusterDistBody = clusterDistTable ? (clusterDistTable.querySelector('tbody') || clusterDistTable) : null;
+
     if (!data.length) {
         if (totalPassRateVal) totalPassRateVal.textContent = '-';
         if (totalFailRateVal) totalFailRateVal.textContent = '-';
@@ -759,8 +766,8 @@ function renderSupervisorDashboard(data) {
         if (cmUnderperformerVal) cmUnderperformerVal.textContent = '-';
         if (leaderChart) leaderChart.innerHTML = '<div class="empty-note">No matching data.</div>';
         if (parameterChart) parameterChart.innerHTML = '<div class="empty-note">No matching data.</div>';
-        if (topHitsTable) topHitsTable.querySelector('tbody').innerHTML = '<tr><td colspan="3" class="empty-note">No matching data.</td></tr>';
-        if (clusterDistTable) clusterDistTable.querySelector('tbody').innerHTML = '<tr><td colspan="7" class="empty-note">No matching data.</td></tr>';
+        if (topHitsBody) topHitsBody.innerHTML = '<tr><td colspan="3" class="empty-note">No matching data.</td></tr>';
+        if (clusterDistBody) clusterDistBody.innerHTML = '<tr><td colspan="7" class="empty-note">No matching data.</td></tr>';
         return;
     }
 
@@ -860,16 +867,13 @@ function renderSupervisorDashboard(data) {
     });
     const sortedHits = Object.entries(hitCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
     
-    if (topHitsTable) {
-        const tbody = topHitsTable.querySelector('tbody');
-        if (tbody) {
-            tbody.innerHTML = sortedHits.length
-                ? sortedHits.map(([key, count]) => {
-                    const [label, category] = key.split('||');
-                    return `<tr><td style="text-align:left;">${label}</td><td>${category}</td><td>${count}</td></tr>`;
-                }).join('')
-                : '<tr><td colspan="3" class="empty-note">No parameters flagged in this selection.</td></tr>';
-        }
+    if (topHitsBody) {
+        topHitsBody.innerHTML = sortedHits.length
+            ? sortedHits.map(([key, count]) => {
+                const [label, category] = key.split('||');
+                return `<tr><td style="text-align:left;">${label}</td><td>${category}</td><td>${count}</td></tr>`;
+            }).join('')
+            : '<tr><td colspan="3" class="empty-note">No parameters flagged in this selection.</td></tr>';
     }
 
     const distBuckets = [
@@ -887,23 +891,20 @@ function renderSupervisorDashboard(data) {
         clusterRows[c].push(r['OVERALL SCORE']);
     });
 
-    if (clusterDistTable) {
-        const clusterDistBody = clusterDistTable.querySelector('tbody');
+    if (clusterDistBody) {
         const clusterNames = Object.keys(clusterRows).sort();
-        if (clusterDistBody) {
-            clusterDistBody.innerHTML = clusterNames.length
-                ? clusterNames.map(c => {
-                    const scores = clusterRows[c];
-                    const total = scores.length;
-                    const pctCells = distBuckets.map(b => {
-                        const count = scores.filter(b.test).length;
-                        const pct = total ? Math.round((count / total) * 100) : 0;
-                        return `<td>${pct}%</td>`;
-                    }).join('');
-                    return `<tr><td style="font-weight:bold;">${c}</td>${pctCells}<td>${total}</td></tr>`;
-                }).join('')
-                : '<tr><td colspan="7" class="empty-note">No matching data.</td></tr>';
-        }
+        clusterDistBody.innerHTML = clusterNames.length
+            ? clusterNames.map(c => {
+                const scores = clusterRows[c];
+                const total = scores.length;
+                const pctCells = distBuckets.map(b => {
+                    const count = scores.filter(b.test).length;
+                    const pct = total ? Math.round((count / total) * 100) : 0;
+                    return `<td>${pct}%</td>`;
+                }).join('');
+                return `<tr><td style="font-weight:bold;">${c}</td>${pctCells}<td>${total}</td></tr>`;
+            }).join('')
+            : '<tr><td colspan="7" class="empty-note">No matching data.</td></tr>';
     }
 }
 
