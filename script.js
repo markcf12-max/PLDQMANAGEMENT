@@ -744,9 +744,10 @@ function renderSupervisorDashboard(data) {
 
     const avgOverall = avg('OVERALL SCORE');
 
+    // Calculated Scores per Line of Business (LOB)
     const lobScores = {};
     data.forEach(r => {
-        const lob = r['BRAND'] || 'Unspecified';
+        const lob = r['LINE OF BUSINESS'] || 'Unspecified LOB';
         if (!lobScores[lob]) lobScores[lob] = { total: 0, count: 0 };
         if (r['OVERALL SCORE'] !== null && r['OVERALL SCORE'] !== undefined) {
             lobScores[lob].total += r['OVERALL SCORE'];
@@ -754,7 +755,7 @@ function renderSupervisorDashboard(data) {
         }
     });
 
-    const lobColors = ['#C8102E', '#7a0f1e', '#1a1a1a', '#6b6b6b', '#f0c4c9'];
+    const lobColors = ['#C8102E', '#7a0f1e', '#1a1a1a', '#6b6b6b', '#f0c4c9', '#d9534f', '#0275d8'];
     const parameterChart = document.getElementById('parameterChart');
     const lobNames = Object.keys(lobScores).sort();
     parameterChart.innerHTML = lobNames.length
@@ -916,7 +917,7 @@ async function renderAgentView() {
 
         return `<div class="audit-row">
             <div class="audit-head">
-                <span>${escapeHtml(r['WEEKENDING'])} · ${escapeHtml(r['FORM TYPE'])} · ${escapeHtml(r['BRAND'])}</span>
+                <span>${escapeHtml(r['WEEKENDING'])} · ${escapeHtml(r['FORM TYPE'])} · ${escapeHtml(r['LINE OF BUSINESS'] || r['BRAND'])}</span>
                 <span class="score-pill ${passed ? 'pass-pill' : 'fail-pill'}">${score === null ? '-' : score + '%'}</span>
             </div>
             <div class="audit-meta">Team Leader: ${escapeHtml(r['TEAM LEADER']) || '—'} · Cluster: ${escapeHtml(r['CLUSTER']) || '—'} · Month: ${escapeHtml(r['MONTH']) || '—'}</div>
@@ -952,6 +953,24 @@ async function renderAgentView() {
             <div class="month-body">${rows.map(auditRowHtml).join('')}</div>
         </details>`;
     }).join('');
+}
+
+/* ==========================================================================
+   DYNAMIC DOM CLEANUP
+   ========================================================================== */
+function removePrototypeBanner() {
+    const allEls = document.querySelectorAll('div, p, header, section, span, banner');
+    allEls.forEach(el => {
+        if (el.textContent && el.textContent.includes('Prototype build') && el.textContent.includes('customer PII')) {
+            el.remove();
+        }
+    });
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', removePrototypeBanner);
+} else {
+    removePrototypeBanner();
 }
 
 /* ==========================================================================
