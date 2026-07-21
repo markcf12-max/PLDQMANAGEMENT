@@ -1,5 +1,5 @@
 /* ==========================================================================
-   FIREBASE
+   FIREBASE IMPORTS
    ========================================================================== */
 import { auth, db } from './firebase-config.js';
 import {
@@ -14,10 +14,12 @@ import {
     collection, query, where, getDocs, writeBatch
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
-const TEAM_LEADER_INVITE_CODE = 'PLDT-TL-2026'; // Note: Client-side invite codes are fine for prototypes, move to Cloud Functions for strict security
+const TEAM_LEADER_INVITE_CODE = 'PLDT-TL-2026';
 const QUALITY_INVITE_CODE = 'PLDT-QA-2026'; 
 
-/* Firestore write batches max out at 500 ops — chunk and run concurrently */
+/* ==========================================================================
+   FIRESTORE BATCH HELPERS (Concurrent Writes)
+   ========================================================================== */
 async function batchWriteDocs(collectionName, docs, idFn) {
     const chunks = [];
     for (let i = 0; i < docs.length; i += 400) chunks.push(docs.slice(i, i + 400));
@@ -49,7 +51,6 @@ async function clearCollection(collectionName) {
     await Promise.all(promises);
 }
 
-/* Replaces the entire auditData collection using predictable IDs (row_0, row_1, ...) */
 async function replaceAuditData(rows) {
     const metaRef = doc(db, 'meta', 'auditData');
     const metaSnap = await getDoc(metaRef);
@@ -79,12 +80,18 @@ async function replaceAuditData(rows) {
 }
 
 /* ==========================================================================
-   SESSION
+   SESSION & STATE
    ========================================================================== */
 let currentSession = null; // { uid, email, role, agentName, agentId }
+let cachedAuditRows = [];
+
+function getNormalizedRole(roleStr) {
+    if (!roleStr) return '';
+    return String(roleStr).trim().toLowerCase().replace(/\s+/g, '_');
+}
 
 /* ==========================================================================
-   AUTH UI
+   AUTH & USER MANAGEMENT
    ========================================================================== */
 function switchAuthTab(which) {
     const tabLogin = document.getElementById('tabLogin');
@@ -126,7 +133,6 @@ function showAuthMsg(elId, text, ok) {
 }
 
 let authFlowInProgress = false;
-const REQUIRED_EMAIL_DOMAIN = '';
 
 async function handleSignup() {
     const emailEl = document.getElementById('signupEmail');
@@ -138,7 +144,6 @@ async function handleSignup() {
     const pw2 = pw2El ? pw2El.value : '';
 
     if (!email || !email.includes('@')) return showAuthMsg('signupMsg', 'Enter a valid work email.', false);
-    if (REQUIRED_EMAIL_DOMAIN && !email.endsWith(REQUIRED_EMAIL_DOMAIN)) return showAuthMsg('signupMsg', `Please sign up using your ${REQUIRED_EMAIL_DOMAIN} work email.`, false);
     if (pw.length < 6) return showAuthMsg('signupMsg', 'Password must be at least 6 characters.', false);
     if (pw !== pw2) return showAuthMsg('signupMsg', 'Passwords do not match.', false);
 
@@ -158,7 +163,7 @@ async function handleSignup() {
             }
             await setDoc(doc(db, 'users', cred.user.uid), { email, role: signupRole });
             await signOut(auth);
-            showAuthMsg('signupMsg', `${signupRole === 'team_leader' ? 'Team Leader' : 'Quality'} account created. You can log in now.`, true);
+            showAuthMsg('signupMsg', `${signupRole === 'team_leader' ? 'Team Leader' : 'Quality'} account created. Log in now.`, true);
             clearSignupForm();
             setTimeout(() => switchAuthTab('login'), 1200);
             return;
@@ -175,7 +180,7 @@ async function handleSignup() {
             const rosterSnap = await getDoc(doc(db, 'roster', email));
             if (!rosterSnap.exists()) {
                 await deleteUser(cred.user);
-                return showAuthMsg('signupMsg', 'This email was not found on the agent roster. Ask your supervisor to add you, then try again.', false);
+                return showAuthMsg('signupMsg', 'Email not on agent roster. Ask supervisor to add you first.', false);
             }
             const match = rosterSnap.data();
 
@@ -186,7 +191,7 @@ async function handleSignup() {
                 agentId: match.agentId || ''
             });
             await signOut(auth);
-            showAuthMsg('signupMsg', `Account created and matched to "${match.agentName}". You can log in now.`, true);
+            showAuthMsg('signupMsg', `Account created & matched to "${match.agentName}". You can log in now.`, true);
             clearSignupForm();
             setTimeout(() => switchAuthTab('login'), 1200);
         } catch (err) {
@@ -199,18 +204,12 @@ async function handleSignup() {
 }
 
 function clearSignupForm() {
-    const email = document.getElementById('signupEmail');
-    const pw = document.getElementById('signupPassword');
-    const pw2 = document.getElementById('signupPassword2');
-    const codeEl = document.getElementById('supervisorCode');
-
-    if (email) email.value = '';
-    if (pw) pw.value = '';
-    if (pw2) pw2.value = '';
-    if (codeEl) codeEl.value = '';
+    ['signupEmail', 'signupPassword', 'signupPassword2', 'supervisorCode'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
 }
 
-/* Quick access now prompts for standard credentials instead of exposing hardcoded passwords */
 async function quickAccess(role) {
     const email = prompt(`Enter ${role.replace('_', ' ')} email:`);
     const password = prompt("Enter password:");
@@ -220,10 +219,10 @@ async function quickAccess(role) {
     authFlowInProgress = true;
     try {
         const cred = await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
-        let profileSnap = await getDoc(doc(db, 'users', cred.user.uid));
+        const profileSnap = await getDoc(doc(db, 'users', cred.user.uid));
         
         if (!profileSnap.exists()) {
-            return showAuthMsg('loginMsg', 'No user role found for this login.', false);
+            return showAuthMsg('loginMsg', 'No user profile document found in Firestore for this account.', false);
         }
         currentSession = { uid: cred.user.uid, ...profileSnap.data() };
         await enterApp();
@@ -240,7 +239,7 @@ async function handleLogin() {
     const email = emailEl ? emailEl.value.trim().toLowerCase() : '';
     const pw = pwEl ? pwEl.value : '';
 
-    if (!email || !pw) return showAuthMsg('loginMsg', 'Enter your email and password.', false);
+    if (!email || !pw) return showAuthMsg('loginMsg', 'Enter email and password.', false);
 
     authFlowInProgress = true;
     try {
@@ -248,7 +247,7 @@ async function handleLogin() {
         const profileSnap = await getDoc(doc(db, 'users', cred.user.uid));
         if (!profileSnap.exists()) {
             await signOut(auth);
-            return showAuthMsg('loginMsg', 'No profile found for this account. Contact your supervisor.', false);
+            return showAuthMsg('loginMsg', 'No user profile found in database (/users/' + cred.user.uid + ').', false);
         }
         currentSession = { uid: cred.user.uid, ...profileSnap.data() };
         if (emailEl) emailEl.value = '';
@@ -267,11 +266,11 @@ function logout() {
 
 function friendlyAuthError(err) {
     const code = err && err.code ? err.code : '';
-    if (code.includes('email-already-in-use')) return 'An account with this email already exists. Try logging in.';
+    if (code.includes('email-already-in-use')) return 'An account with this email already exists.';
     if (code.includes('invalid-credential') || code.includes('wrong-password') || code.includes('user-not-found')) return 'Incorrect email or password.';
     if (code.includes('weak-password')) return 'Password must be at least 6 characters.';
     if (code.includes('invalid-email')) return 'Enter a valid email address.';
-    return 'Something went wrong: ' + (err && err.message ? err.message : 'please try again.');
+    return 'Authentication error: ' + (err && err.message ? err.message : 'Please try again.');
 }
 
 function resetToLoggedOutState() {
@@ -281,35 +280,13 @@ function resetToLoggedOutState() {
     const appScreen = document.getElementById('appScreen');
     const authScreen = document.getElementById('authScreen');
     const sessionChip = document.getElementById('sessionChip');
-    const loginEmail = document.getElementById('loginEmail');
-    const loginPassword = document.getElementById('loginPassword');
-    const loginMsg = document.getElementById('loginMsg');
 
     if (appScreen) appScreen.style.display = 'none';
     if (authScreen) authScreen.style.display = 'flex';
     if (sessionChip) sessionChip.style.display = 'none';
-    if (loginEmail) loginEmail.value = '';
-    if (loginPassword) loginPassword.value = '';
-    if (loginMsg) loginMsg.className = 'auth-msg';
 
     clearSignupForm();
     switchAuthTab('login');
-
-    const agentAuditList = document.getElementById('agentAuditList');
-    const agentScorecard = document.getElementById('agentScorecard');
-    const agentWelcomeName = document.getElementById('agentWelcomeName');
-    const rosterStatus = document.getElementById('rosterStatus');
-    const dataStatus = document.getElementById('dataStatus');
-    const resyncStatus = document.getElementById('resyncStatus');
-    const uploadPopover = document.getElementById('uploadPopover');
-
-    if (agentAuditList) agentAuditList.innerHTML = '';
-    if (agentScorecard) agentScorecard.innerHTML = '';
-    if (agentWelcomeName) agentWelcomeName.textContent = 'Welcome';
-    if (rosterStatus) rosterStatus.textContent = 'No roster loaded yet.';
-    if (dataStatus) dataStatus.textContent = 'No audit data loaded yet.';
-    if (resyncStatus) resyncStatus.textContent = 'Use this if agents uploaded/updated after data was already loaded, or if an agent can’t see rows that should be theirs.';
-    if (uploadPopover) uploadPopover.style.display = 'none';
 }
 
 onAuthStateChanged(auth, async (user) => {
@@ -320,16 +297,23 @@ onAuthStateChanged(auth, async (user) => {
         return;
     }
 
-    const profileSnap = await getDoc(doc(db, 'users', user.uid));
-    if (!profileSnap.exists()) {
-        await signOut(auth);
-        return;
+    try {
+        const profileSnap = await getDoc(doc(db, 'users', user.uid));
+        if (!profileSnap.exists()) {
+            console.error(`User authenticated (${user.uid}), but no user record in /users collection.`);
+            await signOut(auth);
+            return;
+        }
+        currentSession = { uid: user.uid, ...profileSnap.data() };
+        await enterApp();
+    } catch (err) {
+        console.error("Auth state error:", err);
     }
-    currentSession = { uid: user.uid, ...profileSnap.data() };
-    await enterApp();
 });
 
 async function enterApp() {
+    if (!currentSession) return;
+
     const appScreen = document.getElementById('appScreen');
     const authScreen = document.getElementById('authScreen');
     const sessionChip = document.getElementById('sessionChip');
@@ -339,13 +323,15 @@ async function enterApp() {
     if (appScreen) appScreen.style.display = 'flex';
     if (sessionChip) sessionChip.style.display = 'flex';
 
+    const normalizedRole = getNormalizedRole(currentSession.role);
     const roleLabels = { quality: '👤 Quality · ', team_leader: '👤 Team Leader · ', supervisor: '👤 Quality · ', agent: '👤 Agent · ' };
+    
     if (sessionLabel) {
-        sessionLabel.textContent = (roleLabels[currentSession.role] || '👤 ') + currentSession.email;
+        sessionLabel.textContent = (roleLabels[normalizedRole] || '👤 ') + currentSession.email;
     }
 
-    const canViewDashboard = currentSession.role === 'quality' || currentSession.role === 'team_leader' || currentSession.role === 'supervisor';
-    const canUpload = currentSession.role === 'quality' || currentSession.role === 'supervisor';
+    const canViewDashboard = ['quality', 'team_leader', 'supervisor'].includes(normalizedRole);
+    const canUpload = ['quality', 'supervisor'].includes(normalizedRole);
 
     const supervisorSidebar = document.getElementById('supervisorSidebar');
     const supervisorView = document.getElementById('supervisorView');
@@ -360,19 +346,24 @@ async function enterApp() {
     if (canViewDashboard) {
         if (canUpload) await refreshRosterStatus();
         const rows = await loadAllAuditData();
-        if (rows.length) {
-            const dataStatus = document.getElementById('dataStatus');
-            if (canUpload && dataStatus) dataStatus.innerHTML = `✅ ${rows.length} audit rows loaded.`;
-            populateDropdownOptions(rows);
-            filterData();
+        console.log(`Loaded ${rows.length} rows for Supervisor view.`);
+        
+        const dataStatus = document.getElementById('dataStatus');
+        if (dataStatus) {
+            dataStatus.innerHTML = rows.length 
+                ? `✅ ${rows.length} audit rows loaded.` 
+                : `⚠️ 0 rows in auditData collection. Use the upload button to import data.`;
         }
+        
+        populateDropdownOptions(rows);
+        filterData();
     } else {
         await renderAgentView();
     }
 }
 
 /* ==========================================================================
-   HIT-PARAMETER CONFIG
+   HIT PARAMETER & FORMATTING HELPERS
    ========================================================================== */
 const NON_ISSUE_VALUES = new Set(['', 'NO OPPORTUNITY', 'NA', 'N/A', 'NO', 'NONE']);
 
@@ -438,7 +429,7 @@ function getRowIssues(row) {
 }
 
 /* ==========================================================================
-   FILE PARSING
+   WORKBOOK PARSER
    ========================================================================== */
 function parseWorkbookFile(file, preferSheetKeywords = []) {
     return new Promise((resolve, reject) => {
@@ -485,7 +476,7 @@ function findHeader(row, candidates) {
 }
 
 /* ==========================================================================
-   ROSTER UPLOAD (Supervisor)
+   DATA UPLOADS & RESYNC
    ========================================================================== */
 async function handleRosterUpload(event) {
     const file = event.target.files[0];
@@ -495,21 +486,14 @@ async function handleRosterUpload(event) {
 
     try {
         const rows = await parseWorkbookFile(file, ['ROSTER', 'DOMAIN', 'MASTER']);
-        if (!rows.length) throw new Error('empty');
+        if (!rows.length) throw new Error('Excel file appears empty.');
 
-        const emailKey = findHeader(rows[0], [
-            'PLDT/SMART Domain v2', 'PLDT/SMART Domain', 'Domain', 'Email', 
-            'Work Email', 'Conduent Email Address', 'Email Address', 'PLDT Domain'
-        ]);
-        const nameKey = findHeader(rows[0], [
-            'Employee Name', 'Agent Name', 'AGENT/OFFICER NAME', 'Name', 'Full Name'
-        ]);
-        const idKey = findHeader(rows[0], [
-            'Win ID', 'WIN ID', 'Win id', 'ID', 'Employee ID', 'EE number/ID number', 'Agent ID', 'Badge Number'
-        ]);
+        const emailKey = findHeader(rows[0], ['PLDT/SMART Domain v2', 'PLDT/SMART Domain', 'Domain', 'Email', 'Work Email', 'Conduent Email Address', 'Email Address']);
+        const nameKey = findHeader(rows[0], ['Employee Name', 'Agent Name', 'AGENT/OFFICER NAME', 'Name', 'Full Name']);
+        const idKey = findHeader(rows[0], ['Win ID', 'WIN ID', 'ID', 'Employee ID', 'Agent ID']);
 
         if (!emailKey || !nameKey) {
-            throw new Error('missing columns');
+            throw new Error('Missing required Roster headers (Domain/Email and Agent Name).');
         }
 
         const roster = rows
@@ -523,24 +507,28 @@ async function handleRosterUpload(event) {
         await clearCollection('roster');
         await batchWriteDocs('roster', roster, (r) => r.email);
 
-        if (rosterStatus) rosterStatus.innerHTML = `✅ Roster loaded: ${roster.length} agents matched to emails.`;
+        if (rosterStatus) rosterStatus.innerHTML = `✅ Roster uploaded: ${roster.length} agent records.`;
     } catch (err) {
         console.error(err);
-        if (rosterStatus) rosterStatus.innerHTML = `⚠️ Could not read roster — check browser console for details.`;
+        if (rosterStatus) rosterStatus.innerHTML = `⚠️ Roster upload failed: ${err.message}`;
     }
 }
 
 async function refreshRosterStatus() {
-    const snap = await getDocs(collection(db, 'roster'));
-    const rosterStatus = document.getElementById('rosterStatus');
-    if (snap.size && rosterStatus) {
-        rosterStatus.innerHTML = `✅ Roster loaded: ${snap.size} agents.`;
+    try {
+        const snap = await getDocs(collection(db, 'roster'));
+        const rosterStatus = document.getElementById('rosterStatus');
+        if (rosterStatus) {
+            rosterStatus.innerHTML = snap.size ? `✅ Roster active: ${snap.size} agents.` : '⚠️ No roster records found.';
+        }
+    } catch (err) {
+        console.warn("Roster status read restricted or failed:", err);
     }
 }
 
 async function resyncAgentEmails() {
     const statusEl = document.getElementById('resyncStatus');
-    if (statusEl) statusEl.textContent = 'Re-syncing...';
+    if (statusEl) statusEl.textContent = 'Re-syncing email matches...';
 
     try {
         const rosterSnap = await getDocs(collection(db, 'roster'));
@@ -554,9 +542,8 @@ async function resyncAgentEmails() {
         const docs = dataSnap.docs;
 
         let matched = 0, unmatched = 0;
-        const unmatchedNames = new Set();
-
         const promises = [];
+
         for (let i = 0; i < docs.length; i += 400) {
             const chunk = docs.slice(i, i + 400);
             const batch = writeBatch(db);
@@ -564,28 +551,20 @@ async function resyncAgentEmails() {
                 const row = d.data();
                 const key = normalizeName(row['AGENT/OFFICER NAME']);
                 const email = nameToEmail[key] || '';
-                if (email) matched++; else { unmatched++; if (key) unmatchedNames.add(row['AGENT/OFFICER NAME']); }
+                if (email) matched++; else unmatched++;
                 batch.update(doc(db, 'auditData', d.id), { agentEmailLower: email });
             });
             promises.push(batch.commit());
         }
         await Promise.all(promises);
 
-        let msg = `✅ Re-synced: ${matched} rows matched to a roster email, ${unmatched} rows still unmatched (${unmatchedNames.size} distinct agent name(s)).`;
-        if (unmatchedNames.size) {
-            const list = [...unmatchedNames];
-            msg += ` First few: ${list.slice(0, 6).join(' | ')}${list.length > 6 ? ' …' : ''}`;
-        }
-        if (statusEl) statusEl.textContent = msg;
+        if (statusEl) statusEl.textContent = `✅ Re-synced: ${matched} records matched to email, ${unmatched} unmatched.`;
     } catch (err) {
         console.error(err);
-        if (statusEl) statusEl.textContent = '⚠️ Re-sync failed: ' + (err && err.message ? err.message : 'unknown error');
+        if (statusEl) statusEl.textContent = '⚠️ Re-sync failed: ' + err.message;
     }
 }
 
-/* ==========================================================================
-   RAW AUDIT DATA UPLOAD (Supervisor)
-   ========================================================================== */
 const NEEDED_FIELDS = [
     'ID', 'FORM TYPE', 'BRAND', 'LINE OF BUSINESS', 'AGENT/OFFICER NAME', 'AGENT TENURE',
     'TEAM LEADER', 'CLUSTER', 'WEEKENDING', 'MONTH', 'MISTREAT',
@@ -602,15 +581,13 @@ async function handleDataUpload(event) {
 
     try {
         const rows = await parseWorkbookFile(file, ['RAW', 'DATA']);
-        if (!rows.length) throw new Error('empty');
+        if (!rows.length) throw new Error('Data file appears empty.');
 
         const headerMap = {};
         NEEDED_FIELDS.forEach(f => {
             const h = findHeader(rows[0], [f]);
             if (h) headerMap[f] = h;
         });
-
-        const missingFields = NEEDED_FIELDS.filter(f => !headerMap[f]);
 
         const rosterSnap = await getDocs(collection(db, 'roster'));
         const nameToEmail = {};
@@ -622,7 +599,7 @@ async function handleDataUpload(event) {
         const UPPERCASE_FIELDS = ['FORM TYPE', 'MONTH', 'AGENT TENURE', 'OVERALL PASSRATE', 'CM'];
         const TRIM_ONLY_FIELDS = ['BRAND', 'LINE OF BUSINESS', 'TEAM LEADER', 'CLUSTER', 'WEEKENDING'];
 
-        const trimmed = rows.map(r => {
+        const processed = rows.map(r => {
             const out = {};
             NEEDED_FIELDS.forEach(f => {
                 const h = headerMap[f];
@@ -633,40 +610,27 @@ async function handleDataUpload(event) {
 
             ['RELIABLE', 'PERSONABLE', 'FAST', 'SAFE & SECURE', 'OVERALL SCORE'].forEach(k => {
                 const n = parseFloat(out[k]);
-                out[k] = isNaN(n) ? null : (n <= 1 ? n * 100 : n);
+                out[k] = isNaN(n) ? null : (n <= 1 ? Math.round(n * 100) : Math.round(n));
             });
             out.agentEmailLower = nameToEmail[normalizeName(out['AGENT/OFFICER NAME'])] || '';
             return out;
         }).filter(r => r['AGENT/OFFICER NAME']);
 
-        const hasIdColumn = !!headerMap['ID'];
-        const seenKeys = new Set();
-        const deduped = [];
-        trimmed.forEach(row => {
-            const key = hasIdColumn ? String(row['ID']) : NEEDED_FIELDS.map(f => String(row[f])).join('||');
-            if (seenKeys.has(key)) return;
-            seenKeys.add(key);
-            deduped.push(row);
-        });
-        const dupCount = trimmed.length - deduped.length;
+        await replaceAuditData(processed);
 
-        await replaceAuditData(deduped);
-
-        cachedAuditRows = deduped;
-        let msg = `✅ ${deduped.length} audit rows loaded${dupCount ? ` (${dupCount} duplicate(s) removed)` : ''}.`;
-        if (missingFields.length) msg += ` ⚠️ ${missingFields.length} expected column(s) missing.`;
+        cachedAuditRows = processed;
+        if (dataStatus) dataStatus.innerHTML = `✅ Successfully uploaded ${processed.length} audit records.`;
         
-        if (dataStatus) dataStatus.innerHTML = msg;
-        populateDropdownOptions(trimmed);
+        populateDropdownOptions(processed);
         filterData();
     } catch (err) {
-        console.error(err);
-        if (dataStatus) dataStatus.innerHTML = `⚠️ Could not read file. Check expected audit columns.`;
+        console.error("Data Upload Failed:", err);
+        if (dataStatus) dataStatus.innerHTML = `⚠️ Upload failed: ${err.message}`;
     }
 }
 
 /* ==========================================================================
-   SUPERVISOR DASHBOARD
+   SUPERVISOR DASHBOARD & FILTERS
    ========================================================================== */
 function populateDropdownOptions(rows) {
     const map = {
@@ -687,12 +651,16 @@ function populateDropdownOptions(rows) {
     });
 }
 
-let cachedAuditRows = [];
-
 async function loadAllAuditData() {
-    const snap = await getDocs(collection(db, 'auditData'));
-    cachedAuditRows = snap.docs.map(d => d.data());
-    return cachedAuditRows;
+    try {
+        const snap = await getDocs(collection(db, 'auditData'));
+        cachedAuditRows = snap.docs.map(d => d.data());
+        console.log("Firestore auditData query succeeded. Row count:", cachedAuditRows.length);
+        return cachedAuditRows;
+    } catch (err) {
+        console.error("Failed to load /auditData collection:", err);
+        return [];
+    }
 }
 
 function toggleUploadPanel() {
@@ -711,7 +679,10 @@ function resetFilters() {
 
 function filterData() {
     const rows = cachedAuditRows;
-    if (!rows.length) return;
+    if (!rows || !rows.length) {
+        renderSupervisorDashboard([]);
+        return;
+    }
 
     const getValue = (id) => {
         const el = document.getElementById(id);
@@ -759,15 +730,15 @@ function renderSupervisorDashboard(data) {
     const topHitsBody = topHitsTable ? (topHitsTable.querySelector('tbody') || topHitsTable) : null;
     const clusterDistBody = clusterDistTable ? (clusterDistTable.querySelector('tbody') || clusterDistTable) : null;
 
-    if (!data.length) {
+    if (!data || !data.length) {
         if (totalPassRateVal) totalPassRateVal.textContent = '-';
         if (totalFailRateVal) totalFailRateVal.textContent = '-';
         if (cmSuperstarVal) cmSuperstarVal.textContent = '-';
         if (cmUnderperformerVal) cmUnderperformerVal.textContent = '-';
         if (leaderChart) leaderChart.innerHTML = '<div class="empty-note">No matching data.</div>';
         if (parameterChart) parameterChart.innerHTML = '<div class="empty-note">No matching data.</div>';
-        if (topHitsBody) topHitsBody.innerHTML = '<tr><td colspan="3" class="empty-note">No matching data.</td></tr>';
-        if (clusterDistBody) clusterDistBody.innerHTML = '<tr><td colspan="7" class="empty-note">No matching data.</td></tr>';
+        if (topHitsBody) topHitsBody.innerHTML = '<tr><td colspan="3" class="empty-note">No matching audit data available.</td></tr>';
+        if (clusterDistBody) clusterDistBody.innerHTML = '<tr><td colspan="7" class="empty-note">No matching audit data available.</td></tr>';
         return;
     }
 
@@ -779,12 +750,12 @@ function renderSupervisorDashboard(data) {
 
     const avgOverall = avg('OVERALL SCORE');
 
-    // Calculated Scores per Line of Business (LOB)
+    // Calculated LOB Metrics
     const lobScores = {};
     data.forEach(r => {
-        const lob = r['LINE OF BUSINESS'] || 'Unspecified LOB';
+        const lob = r['LINE OF BUSINESS'] || r['BRAND'] || 'Unspecified LOB';
         if (!lobScores[lob]) lobScores[lob] = { total: 0, count: 0 };
-        if (r['OVERALL SCORE'] !== null && r['OVERALL SCORE'] !== undefined) {
+        if (r['OVERALL SCORE'] !== null && r['OVERALL SCORE'] !== undefined && !isNaN(r['OVERALL SCORE'])) {
             lobScores[lob].total += r['OVERALL SCORE'];
             lobScores[lob].count++;
         }
@@ -845,14 +816,17 @@ function renderSupervisorDashboard(data) {
     data.forEach(r => {
         const tl = r['TEAM LEADER'] || 'Unassigned';
         if (!tlScores[tl]) tlScores[tl] = { total: 0, count: 0 };
-        if (r['OVERALL SCORE'] !== null) { tlScores[tl].total += r['OVERALL SCORE']; tlScores[tl].count++; }
+        if (r['OVERALL SCORE'] !== null && r['OVERALL SCORE'] !== undefined && !isNaN(r['OVERALL SCORE'])) {
+            tlScores[tl].total += r['OVERALL SCORE'];
+            tlScores[tl].count++;
+        }
     });
 
     if (leaderChart) {
         leaderChart.innerHTML = Object.entries(tlScores).map(([tl, s]) => {
             const a = s.count ? Math.round(s.total / s.count) : 0;
             return `<div class="horizontal-bar-row">
-                <div class="horizontal-label" title="${tl}">${tl}</div>
+                <div class="horizontal-label" title="${escapeHtml(tl)}">${escapeHtml(tl)}</div>
                 <div class="horizontal-bar-container"><div class="horizontal-bar-fill" style="width:${a}%;">${a}%</div></div>
             </div>`;
         }).join('') || '<div class="empty-note">No matching data.</div>';
@@ -871,7 +845,7 @@ function renderSupervisorDashboard(data) {
         topHitsBody.innerHTML = sortedHits.length
             ? sortedHits.map(([key, count]) => {
                 const [label, category] = key.split('||');
-                return `<tr><td style="text-align:left;">${label}</td><td>${category}</td><td>${count}</td></tr>`;
+                return `<tr><td style="text-align:left;">${escapeHtml(label)}</td><td>${escapeHtml(category)}</td><td>${count}</td></tr>`;
             }).join('')
             : '<tr><td colspan="3" class="empty-note">No parameters flagged in this selection.</td></tr>';
     }
@@ -886,7 +860,7 @@ function renderSupervisorDashboard(data) {
     const clusterRows = {};
     data.forEach(r => {
         const c = r['CLUSTER'] || 'Unassigned';
-        if (r['OVERALL SCORE'] === null || r['OVERALL SCORE'] === undefined) return;
+        if (r['OVERALL SCORE'] === null || r['OVERALL SCORE'] === undefined || isNaN(r['OVERALL SCORE'])) return;
         if (!clusterRows[c]) clusterRows[c] = [];
         clusterRows[c].push(r['OVERALL SCORE']);
     });
@@ -902,14 +876,14 @@ function renderSupervisorDashboard(data) {
                     const pct = total ? Math.round((count / total) * 100) : 0;
                     return `<td>${pct}%</td>`;
                 }).join('');
-                return `<tr><td style="font-weight:bold;">${c}</td>${pctCells}<td>${total}</td></tr>`;
+                return `<tr><td style="font-weight:bold;">${escapeHtml(c)}</td>${pctCells}<td>${total}</td></tr>`;
             }).join('')
             : '<tr><td colspan="7" class="empty-note">No matching data.</td></tr>';
     }
 }
 
 /* ==========================================================================
-   AGENT VIEW
+   AGENT DASHBOARD VIEW
    ========================================================================== */
 async function renderAgentView() {
     const welcomeName = document.getElementById('agentWelcomeName');
@@ -917,9 +891,14 @@ async function renderAgentView() {
         welcomeName.textContent = 'Welcome, ' + (currentSession.agentName || currentSession.email);
     }
 
-    const q = query(collection(db, 'auditData'), where('agentEmailLower', '==', currentSession.email));
-    const snap = await getDocs(q);
-    const myRows = snap.docs.map(d => d.data());
+    let myRows = [];
+    try {
+        const q = query(collection(db, 'auditData'), where('agentEmailLower', '==', currentSession.email.toLowerCase()));
+        const snap = await getDocs(q);
+        myRows = snap.docs.map(d => d.data());
+    } catch (err) {
+        console.error("Agent query failed:", err);
+    }
 
     const emptyState = document.getElementById('agentEmptyState');
     const agentContent = document.getElementById('agentContent');
@@ -1014,25 +993,7 @@ async function renderAgentView() {
 }
 
 /* ==========================================================================
-   DYNAMIC DOM CLEANUP
-   ========================================================================== */
-function removePrototypeBanner() {
-    const allEls = document.querySelectorAll('div, p, header, section, span, banner');
-    allEls.forEach(el => {
-        if (el.textContent && el.textContent.includes('Prototype build') && el.textContent.includes('customer PII')) {
-            el.remove();
-        }
-    });
-}
-
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', removePrototypeBanner);
-} else {
-    removePrototypeBanner();
-}
-
-/* ==========================================================================
-   EXPOSE TO WINDOW
+   GLOBAL EXPORTS & INITIALIZATION
    ========================================================================== */
 window.switchAuthTab = switchAuthTab;
 window.setSignupRole = setSignupRole;
@@ -1047,7 +1008,4 @@ window.handleRosterUpload = handleRosterUpload;
 window.handleDataUpload = handleDataUpload;
 window.resyncAgentEmails = resyncAgentEmails;
 
-/* ==========================================================================
-   INIT
-   ========================================================================== */
 setSignupRole('agent');
