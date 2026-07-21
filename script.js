@@ -756,11 +756,11 @@ function renderGroupedBarChart(data) {
         data: {
             labels: labels,
             datasets: [
-                { label: 'Reliable', data: dataReliable, backgroundColor: '#B0BEC5' },
-                { label: 'Personable', data: dataPersonable, backgroundColor: '#78909C' },
-                { label: 'Fast', data: dataFast, backgroundColor: '#006064' },
-                { label: 'Safe & Secure', data: dataSafe, backgroundColor: '#004D40' },
-                { label: 'Overall Score', data: dataOverall, backgroundColor: '#072F45' }
+                { label: 'Reliable', data: dataReliable, backgroundColor: '#EF9A9A' },      // Light Rose / Coral
+                { label: 'Personable', data: dataPersonable, backgroundColor: '#E57373' },    // Soft Red
+                { label: 'Fast', data: dataFast, backgroundColor: '#E53935' },          // Medium Red
+                { label: 'Safe & Secure', data: dataSafe, backgroundColor: '#C62828' }, // Crimson / Dark Red
+                { label: 'Overall Score', data: dataOverall, backgroundColor: '#7F0000' }   // Deep Burgundy / Wine
             ]
         },
         plugins: [ChartDataLabels],
