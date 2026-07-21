@@ -637,7 +637,7 @@ async function handleDataUpload(event) {
 function populateDropdownOptions(rows) {
     const map = {
         selectFormType: 'FORM TYPE',
-        selectBrand: 'BRAND',
+        selectBrand: 'LINE OF BUSINESS',
         selectMonth: 'MONTH',
         selectWeekending: 'WEEKENDING',
         selectTenure: 'AGENT TENURE',
@@ -647,7 +647,7 @@ function populateDropdownOptions(rows) {
         const sel = document.getElementById(selId);
         if (!sel) return;
         const current = sel.value;
-        const uniques = [...new Set(rows.map(r => r[field]).filter(Boolean))].sort();
+        const uniques = [...new Set(rows.map(r => r[field] || r['BRAND']).filter(Boolean))].sort();
         sel.innerHTML = `<option value="ALL">(All)</option>` + uniques.map(v => `<option value="${v}">${v}</option>`).join('');
         if (uniques.includes(current)) sel.value = current;
     });
@@ -693,21 +693,22 @@ function filterData() {
 
     const f = {
         formType: getValue('selectFormType'),
-        brand: getValue('selectBrand'),
+        lob: getValue('selectBrand'),
         month: getValue('selectMonth'),
         weekending: getValue('selectWeekending'),
         tenure: getValue('selectTenure'),
         teamLeader: getValue('selectTeamLeader')
     };
 
-    const filtered = rows.filter(r =>
-        (f.formType === 'ALL' || r['FORM TYPE'] === f.formType) &&
-        (f.brand === 'ALL' || r['BRAND'] === f.brand) &&
-        (f.month === 'ALL' || r['MONTH'] === f.month) &&
-        (f.weekending === 'ALL' || r['WEEKENDING'] === f.weekending) &&
-        (f.tenure === 'ALL' || r['AGENT TENURE'] === f.tenure) &&
-        (f.teamLeader === 'ALL' || r['TEAM LEADER'] === f.teamLeader)
-    );
+    const filtered = rows.filter(r => {
+        const rLob = r['LINE OF BUSINESS'] || r['BRAND'] || '';
+        return (f.formType === 'ALL' || r['FORM TYPE'] === f.formType) &&
+            (f.lob === 'ALL' || rLob === f.lob) &&
+            (f.month === 'ALL' || r['MONTH'] === f.month) &&
+            (f.weekending === 'ALL' || r['WEEKENDING'] === f.weekending) &&
+            (f.tenure === 'ALL' || r['AGENT TENURE'] === f.tenure) &&
+            (f.teamLeader === 'ALL' || r['TEAM LEADER'] === f.teamLeader);
+    });
 
     renderSupervisorDashboard(filtered);
 }
@@ -766,6 +767,12 @@ function renderGroupedBarChart(data) {
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            layout: {
+                padding: {
+                    top: 20,
+                    bottom: 10
+                }
+            },
             plugins: {
                 legend: {
                     position: 'top',
@@ -778,9 +785,10 @@ function renderGroupedBarChart(data) {
                 },
                 datalabels: {
                     anchor: 'end',
-                    align: 'end',
+                    align: 'top',
+                    offset: 2,
                     formatter: (val) => val ? val + '%' : '',
-                    font: { size: 9, weight: 'bold' },
+                    font: { size: 8, weight: 'bold' },
                     color: '#333'
                 }
             },
@@ -791,7 +799,13 @@ function renderGroupedBarChart(data) {
                 },
                 x: {
                     grid: { display: false },
-                    ticks: { font: { size: 10, weight: '600' }, color: '#333' }
+                    ticks: { 
+                        font: { size: 9, weight: '600' }, 
+                        color: '#333',
+                        maxRotation: 45,
+                        minRotation: 0,
+                        autoSkip: false
+                    }
                 }
             }
         }
@@ -805,10 +819,8 @@ function renderSupervisorDashboard(data) {
     const cmUnderperformerVal = document.getElementById('cmUnderperformerVal');
     const leaderChart = document.getElementById('leaderChart');
     const topHitsTable = document.getElementById('topHitsTable');
-    const clusterDistTable = document.getElementById('clusterDistTable');
 
     const topHitsBody = topHitsTable ? (topHitsTable.querySelector('tbody') || topHitsTable) : null;
-    const clusterDistBody = clusterDistTable ? (clusterDistTable.querySelector('tbody') || clusterDistTable) : null;
 
     if (!data || !data.length) {
         if (totalPassRateVal) totalPassRateVal.textContent = '-';
@@ -817,7 +829,6 @@ function renderSupervisorDashboard(data) {
         if (cmUnderperformerVal) cmUnderperformerVal.textContent = '-';
         if (leaderChart) leaderChart.innerHTML = '<div class="empty-note">No matching data.</div>';
         if (topHitsBody) topHitsBody.innerHTML = '<tr><td colspan="3" class="empty-note">No matching audit data available.</td></tr>';
-        if (clusterDistBody) clusterDistBody.innerHTML = '<tr><td colspan="7" class="empty-note">No matching audit data available.</td></tr>';
         
         if (lobChartInstance) {
             lobChartInstance.destroy();
@@ -906,37 +917,6 @@ function renderSupervisorDashboard(data) {
                 return `<tr><td style="text-align:left;">${escapeHtml(label)}</td><td>${escapeHtml(category)}</td><td>${count}</td></tr>`;
             }).join('')
             : '<tr><td colspan="3" class="empty-note">No parameters flagged in this selection.</td></tr>';
-    }
-
-    const distBuckets = [
-        { label: '90–100%', test: s => s >= 90 },
-        { label: '80–89%', test: s => s >= 80 && s < 90 },
-        { label: '70–79%', test: s => s >= 70 && s < 80 },
-        { label: '60–69%', test: s => s >= 60 && s < 70 },
-        { label: 'Below 60%', test: s => s < 60 }
-    ];
-    const clusterRows = {};
-    data.forEach(r => {
-        const c = r['CLUSTER'] || 'Unassigned';
-        if (r['OVERALL SCORE'] === null || r['OVERALL SCORE'] === undefined || isNaN(r['OVERALL SCORE'])) return;
-        if (!clusterRows[c]) clusterRows[c] = [];
-        clusterRows[c].push(r['OVERALL SCORE']);
-    });
-
-    if (clusterDistBody) {
-        const clusterNames = Object.keys(clusterRows).sort();
-        clusterDistBody.innerHTML = clusterNames.length
-            ? clusterNames.map(c => {
-                const scores = clusterRows[c];
-                const total = scores.length;
-                const pctCells = distBuckets.map(b => {
-                    const count = scores.filter(b.test).length;
-                    const pct = total ? Math.round((count / total) * 100) : 0;
-                    return `<td>${pct}%</td>`;
-                }).join('');
-                return `<tr><td style="font-weight:bold;">${escapeHtml(c)}</td>${pctCells}<td>${total}</td></tr>`;
-            }).join('')
-            : '<tr><td colspan="7" class="empty-note">No matching data.</td></tr>';
     }
 }
 
